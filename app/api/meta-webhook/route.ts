@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 
@@ -70,6 +70,8 @@ async function saveRawWebhookEvent(params: {
   recipientId?: string | null;
   messageId?: string | null;
 }) {
+  const supabaseAdmin = getSupabaseAdmin();
+
   const { error } = await supabaseAdmin.from("webhook_events").insert({
     meta_object: params.metaObject || null,
     event_type: params.eventType,
@@ -90,6 +92,8 @@ async function upsertMessage(params: {
   body: MetaWebhookBody;
 }) {
   const { event, body } = params;
+  const supabaseAdmin = getSupabaseAdmin();
+
   const message = event.message;
 
   if (!message?.mid) return;
@@ -163,6 +167,8 @@ async function saveReadEvent(params: {
   body: MetaWebhookBody;
 }) {
   const { event, body } = params;
+  const supabaseAdmin = getSupabaseAdmin();
+
   const read = event.read;
 
   if (!read) return;
