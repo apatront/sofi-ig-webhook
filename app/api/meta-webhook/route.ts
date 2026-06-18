@@ -17,6 +17,15 @@ type InstagramMessagingEvent = {
   };
 };
 
+type MetaWebhookBody = {
+  object?: string;
+  entry?: Array<{
+    id?: string;
+    time?: number;
+    messaging?: InstagramMessagingEvent[];
+  }>;
+};
+
 function msToIso(timestampMs?: number): string | null {
   if (!timestampMs) return null;
 
@@ -53,7 +62,7 @@ function getConversationParts(event: InstagramMessagingEvent) {
 }
 
 async function saveRawWebhookEvent(params: {
-  body: unknown;
+  body: MetaWebhookBody;
   metaObject?: string;
   eventType: string;
   igAccountId?: string | null;
@@ -78,7 +87,7 @@ async function saveRawWebhookEvent(params: {
 
 async function upsertMessage(params: {
   event: InstagramMessagingEvent;
-  body: unknown;
+  body: MetaWebhookBody;
 }) {
   const { event, body } = params;
   const message = event.message;
@@ -89,7 +98,7 @@ async function upsertMessage(params: {
   if (!parts) return;
 
   const direction = parts.isEcho ? "outbound" : "inbound";
-  const sentAt = msToIso(event.timestamp);
+  const sentAt: string | null = msToIso(event.timestamp);
 
   const { error: messageError } = await supabaseAdmin.from("messages").upsert(
     {
@@ -113,7 +122,7 @@ async function upsertMessage(params: {
     console.error("Supabase messages upsert error:", messageError);
   }
 
-  const conversationUpdate =
+  const conversationUpdate: Record<string, unknown> =
     direction === "inbound"
       ? {
           conversation_id: parts.conversationId,
@@ -151,7 +160,7 @@ async function upsertMessage(params: {
 
 async function saveReadEvent(params: {
   event: InstagramMessagingEvent;
-  body: unknown;
+  body: MetaWebhookBody;
 }) {
   const { event, body } = params;
   const read = event.read;
@@ -166,7 +175,7 @@ async function saveReadEvent(params: {
   const igAccountId = recipientId;
   const externalUserId = senderId;
   const conversationId = `${igAccountId}:${externalUserId}`;
-  const readAt = msToIso(event.timestamp);
+  const readAt: string | null = msToIso(event.timestamp);
 
   const { error: readError } = await supabaseAdmin
     .from("message_read_events")
@@ -185,22 +194,21 @@ async function saveReadEvent(params: {
     console.error("Supabase message_read_events insert error:", readError);
   }
 
+  const seenUpdate: Record<string, unknown> = {
+    conversation_id: conversationId,
+    ig_account_id: igAccountId,
+    external_user_id: externalUserId,
+    last_seen_at: readAt,
+    last_seen_message_id: read.mid || null,
+    last_seen_by: senderId,
+    updated_at: new Date().toISOString(),
+  };
+
   const { error: conversationError } = await supabaseAdmin
     .from("conversations")
-    .upsert(
-      {
-        conversation_id: conversationId,
-        ig_account_id: igAccountId,
-        external_user_id: externalUserId,
-        last_seen_at: readAt,
-        last_seen_message_id: read.mid || null,
-        last_seen_by: senderId,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "conversation_id",
-      }
-    );
+    .upsert(seenUpdate, {
+      onConflict: "conversation_id",
+    });
 
   if (conversationError) {
     console.error(
@@ -246,7 +254,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as MetaWebhookBody;
 
     console.log("META WEBHOOK RAW PAYLOAD:");
     console.log(JSON.stringify(body, null, 2));
