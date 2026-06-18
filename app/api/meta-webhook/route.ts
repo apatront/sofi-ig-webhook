@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { fetchInstagramUserProfile } from "@/lib/instagramProfile";
 
 const VERIFY_TOKEN = process.env.META_VERIFY_TOKEN;
 
@@ -87,6 +88,69 @@ async function saveRawWebhookEvent(params: {
   }
 }
 
+async function fetchAndUpdateProfileIfNeeded(params: {
+  conversationId: string;
+  externalUserId: string;
+}) {
+  const { conversationId, externalUserId } = params;
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const { data: existingConversation, error: selectError } = await supabaseAdmin
+    .from("conversations")
+    .select("external_username, profile_fetched_at")
+    .eq("conversation_id", conversationId)
+    .maybeSingle();
+
+  if (selectError) {
+    console.error("Supabase profile select error:", selectError);
+    return;
+  }
+
+  const alreadyHasUsername = Boolean(existingConversation?.external_username);
+
+  const fetchedRecently =
+    existingConversation?.profile_fetched_at &&
+    Date.now() - new Date(existingConversation.profile_fetched_at).getTime() <
+      1000 * 60 * 60 * 24 * 7;
+
+  if (alreadyHasUsername && fetchedRecently) {
+    return;
+  }
+
+  const profile = await fetchInstagramUserProfile(externalUserId);
+
+  if (!profile) {
+    return;
+  }
+
+  const { error: updateError } = await supabaseAdmin
+    .from("conversations")
+    .update({
+      external_username: profile.username || null,
+      external_name: profile.name || null,
+      external_profile_pic: profile.profile_pic || null,
+      is_user_follow_business:
+        typeof profile.is_user_follow_business === "boolean"
+          ? profile.is_user_follow_business
+          : null,
+      is_business_follow_user:
+        typeof profile.is_business_follow_user === "boolean"
+          ? profile.is_business_follow_user
+          : null,
+      is_verified_user:
+        typeof profile.is_verified_user === "boolean"
+          ? profile.is_verified_user
+          : null,
+      profile_fetched_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("conversation_id", conversationId);
+
+  if (updateError) {
+    console.error("Supabase profile update error:", updateError);
+  }
+}
+
 async function upsertMessage(params: {
   event: InstagramMessagingEvent;
   body: MetaWebhookBody;
@@ -159,6 +223,13 @@ async function upsertMessage(params: {
 
   if (conversationError) {
     console.error("Supabase conversations upsert error:", conversationError);
+  }
+
+  if (direction === "inbound") {
+    await fetchAndUpdateProfileIfNeeded({
+      conversationId: parts.conversationId,
+      externalUserId: parts.externalUserId,
+    });
   }
 }
 
