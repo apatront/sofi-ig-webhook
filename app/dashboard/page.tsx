@@ -45,6 +45,8 @@ type Conversation = {
   needs_sofi: boolean | null;
   needs_admin: boolean | null;
   assigned_to: string | null;
+  assignment_locked: boolean | null;
+  assignment_source: string | null;
 
   lead_score: number | null;
   urgency_score: number | null;
@@ -54,11 +56,23 @@ type Conversation = {
   next_action: string | null;
   ai_reasoning: string | null;
   last_ai_analysis_at: string | null;
+  ai_analysis_status: string | null;
+  ai_analyzed_message_id: string | null;
+  ai_analysis_error: string | null;
 
   conversation_stage: string | null;
   conversion_status: string | null;
   estimated_value: number | null;
   customer_status: string | null;
+
+  resolution_status: string | null;
+  needs_resolution_review: boolean | null;
+  open_requests: string[] | null;
+  unresolved_items: string[] | null;
+  resolution_reason: string | null;
+  resolution_alert: string | null;
+  resolution_reviewed_at: string | null;
+  last_resolution_review_message_id: string | null;
 
   last_message_id: string | null;
   last_message_type: string | null;
@@ -80,9 +94,16 @@ type Conversation = {
   updated_at: string | null;
 };
 
-type DashboardTab = "overview" | "urgent" | "sofi" | "admin" | "answered";
+type DashboardTab =
+  | "overview"
+  | "urgent"
+  | "sofi"
+  | "admin"
+  | "resolved";
 
 type QueueTone = "urgent" | "sofi" | "admin" | "neutral";
+
+type Assignee = "sofi" | "admin";
 
 function normalizeText(value: string | null | undefined) {
   return (value || "").toLowerCase().trim();
@@ -103,12 +124,46 @@ function formatDate(dateString: string | null) {
   }).format(date);
 }
 
+function isResolvedConversation(conversation: Conversation) {
+  return (
+    normalizeText(conversation.resolution_status) === "resolved" ||
+    normalizeText(conversation.status) === "closed"
+  );
+}
+
+function isActiveConversation(conversation: Conversation) {
+  if (isResolvedConversation(conversation)) {
+    return false;
+  }
+
+  const resolutionStatus = normalizeText(conversation.resolution_status);
+  const status = normalizeText(conversation.status);
+
+  return Boolean(
+    conversation.needs_response ||
+      conversation.needs_resolution_review ||
+      ["pending", "bot_answered"].includes(status) ||
+      [
+        "pending_response",
+        "answered_pending_resolution",
+        "needs_follow_up",
+      ].includes(resolutionStatus)
+  );
+}
+
 function minutesWaiting(conversation: Conversation) {
-  if (!conversation.needs_response || !conversation.last_user_message_at) {
+  if (!isActiveConversation(conversation)) {
     return 0;
   }
 
-  const timestamp = new Date(conversation.last_user_message_at).getTime();
+  const referenceDate =
+    conversation.last_user_message_at || conversation.updated_at;
+
+  if (!referenceDate) {
+    return 0;
+  }
+
+  const timestamp = new Date(referenceDate).getTime();
 
   if (Number.isNaN(timestamp)) {
     return 0;
@@ -128,6 +183,7 @@ function formatWaitingTime(minutes: number) {
   }
 
   const days = Math.floor(hours / 24);
+
   return `${days} d`;
 }
 
@@ -155,7 +211,7 @@ function getQueue(conversation: Conversation) {
   const priority = normalizeText(conversation.priority);
 
   const isUrgent =
-    conversation.needs_response &&
+    isActiveConversation(conversation) &&
     (priority === "high" ||
       (conversation.urgency_score || 0) >= 70 ||
       waitingMinutes >= 180);
@@ -193,6 +249,7 @@ function getOperationalScore(conversation: Conversation) {
   const priority = normalizeText(conversation.priority);
   const category = normalizeText(conversation.category);
   const intent = normalizeText(conversation.intent);
+  const resolutionStatus = normalizeText(conversation.resolution_status);
 
   if (queue === "urgent") score += 200;
   if (queue === "sofi") score += 100;
@@ -217,20 +274,47 @@ function getOperationalScore(conversation: Conversation) {
     score += 50;
   }
 
+  if (resolutionStatus === "answered_pending_resolution") {
+    score += 60;
+  }
+
+  if (resolutionStatus === "needs_follow_up") {
+    score += 80;
+  }
+
+  if (conversation.needs_resolution_review) {
+    score += 50;
+  }
+
   if (waitingMinutes >= 180) score += 30;
   if (waitingMinutes >= 1440) score += 70;
 
   score += conversation.lead_score || 0;
   score += conversation.urgency_score || 0;
 
-  if (conversation.status === "answered") score -= 200;
-  if (conversation.status === "closed") score -= 500;
+  if (isResolvedConversation(conversation)) {
+    score -= 500;
+  }
 
   return score;
 }
 
 function getStatusLabel(conversation: Conversation) {
-  if (conversation.status === "bot_answered" && conversation.needs_response) {
+  const resolutionStatus = normalizeText(conversation.resolution_status);
+
+  if (resolutionStatus === "resolved") {
+    return "Resuelta";
+  }
+
+  if (resolutionStatus === "answered_pending_resolution") {
+    return "Respondida · No resuelta";
+  }
+
+  if (resolutionStatus === "needs_follow_up") {
+    return "Seguimiento pendiente";
+  }
+
+  if (conversation.status === "bot_answered") {
     return "Bot respondió";
   }
 
@@ -239,7 +323,7 @@ function getStatusLabel(conversation: Conversation) {
   }
 
   if (conversation.status === "answered") {
-    return "Contestada";
+    return "Respuesta en revisión";
   }
 
   if (conversation.status === "closed") {
@@ -247,6 +331,24 @@ function getStatusLabel(conversation: Conversation) {
   }
 
   return conversation.status || "Sin estado";
+}
+
+function getStatusClass(conversation: Conversation) {
+  const resolutionStatus = normalizeText(conversation.resolution_status);
+
+  if (resolutionStatus === "resolved") {
+    return "resolved";
+  }
+
+  if (resolutionStatus === "answered_pending_resolution") {
+    return "incomplete";
+  }
+
+  if (resolutionStatus === "needs_follow_up") {
+    return "follow_up";
+  }
+
+  return normalizeText(conversation.status) || "unknown";
 }
 
 function getPriorityLabel(priority: string | null) {
@@ -324,16 +426,27 @@ function MetricCard({
 function ConversationCard({
   conversation,
   tone,
+  assigningConversationId,
+  onAssign,
 }: {
   conversation: Conversation;
   tone: QueueTone;
+  assigningConversationId: string | null;
+  onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
 }) {
   const waiting = minutesWaiting(conversation);
   const queueMeta = getQueueMeta(tone);
 
+  const isAssigning =
+    assigningConversationId === conversation.conversation_id;
+
   const instagramUrl = conversation.external_username
     ? `https://www.instagram.com/${conversation.external_username}/`
     : null;
+
+  const unresolvedItems = Array.isArray(conversation.unresolved_items)
+    ? conversation.unresolved_items
+    : [];
 
   return (
     <article className={`conversation-card conversation-${tone}`}>
@@ -374,6 +487,10 @@ function ConversationCard({
               {conversation.is_business_follow_user && (
                 <span>Sofi la sigue</span>
               )}
+
+              {conversation.assignment_source === "manual" && (
+                <span>Asignación manual</span>
+              )}
             </div>
           </div>
         </div>
@@ -386,9 +503,7 @@ function ConversationCard({
 
       <div className="conversation-status-row">
         <span
-          className={`status-pill status-${normalizeText(
-            conversation.status
-          )}`}
+          className={`status-pill status-${getStatusClass(conversation)}`}
         >
           {getStatusLabel(conversation)}
         </span>
@@ -408,6 +523,29 @@ function ConversationCard({
           </span>
         )}
       </div>
+
+      {conversation.resolution_alert && (
+        <div className="resolution-alert">
+          <AlertTriangle size={18} />
+
+          <div>
+            <strong>Respuesta incompleta</strong>
+            <p>{conversation.resolution_alert}</p>
+          </div>
+        </div>
+      )}
+
+      {unresolvedItems.length > 0 && (
+        <div className="unresolved-panel">
+          <span>Sigue pendiente</span>
+
+          <ul>
+            {unresolvedItems.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="message-panel">
         <div className="panel-label">
@@ -487,6 +625,32 @@ function ConversationCard({
         </div>
       </div>
 
+      <div className="assignment-actions">
+        <button
+          type="button"
+          className={`assignment-button ${
+            conversation.assigned_to === "sofi" ? "assignment-active" : ""
+          }`}
+          disabled={isAssigning}
+          onClick={() => onAssign(conversation.conversation_id, "sofi")}
+        >
+          <UserRound size={15} />
+          {isAssigning ? "Guardando..." : "Asignar a Sofi"}
+        </button>
+
+        <button
+          type="button"
+          className={`assignment-button ${
+            conversation.assigned_to === "admin" ? "assignment-active" : ""
+          }`}
+          disabled={isAssigning}
+          onClick={() => onAssign(conversation.conversation_id, "admin")}
+        >
+          <Headphones size={15} />
+          {isAssigning ? "Guardando..." : "Asignar a Admin"}
+        </button>
+      </div>
+
       <div className="conversation-footer">
         <div
           className={`waiting-indicator ${
@@ -497,7 +661,11 @@ function ConversationCard({
 
           <div>
             <strong>{formatWaitingTime(waiting)}</strong>
-            <span>esperando respuesta</span>
+            <span>
+              {conversation.needs_resolution_review
+                ? "sin resolución completa"
+                : "esperando atención"}
+            </span>
           </div>
         </div>
 
@@ -513,7 +681,7 @@ function ConversationCard({
               rel="noreferrer"
               className="instagram-button"
             >
-              Abrir Instagram
+              Abrir DM en IG
               <ArrowUpRight size={16} />
             </a>
           ) : (
@@ -533,12 +701,16 @@ function QueueSection({
   conversations,
   icon,
   tone,
+  assigningConversationId,
+  onAssign,
 }: {
   title: string;
   description: string;
   conversations: Conversation[];
   icon: ReactNode;
   tone: QueueTone;
+  assigningConversationId: string | null;
+  onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
 }) {
   return (
     <section className={`queue-section queue-section-${tone}`}>
@@ -564,6 +736,8 @@ function QueueSection({
               key={conversation.conversation_id}
               conversation={conversation}
               tone={tone}
+              assigningConversationId={assigningConversationId}
+              onAssign={onAssign}
             />
           ))}
         </div>
@@ -582,47 +756,128 @@ export default function DashboardPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [activeTab, setActiveTab] = useState<DashboardTab>("overview");
+  const [actionError, setActionError] = useState("");
+  const [assigningConversationId, setAssigningConversationId] = useState<
+    string | null
+  >(null);
+
+  const [activeTab, setActiveTab] =
+    useState<DashboardTab>("overview");
+
   const [search, setSearch] = useState("");
   const [onlyPending, setOnlyPending] = useState(true);
 
-  useEffect(() => {
-    async function loadConversations() {
-      try {
+  async function loadConversations(showLoading = false) {
+    try {
+      if (showLoading) {
         setLoading(true);
-        setLoadError("");
+      }
 
-        const response = await fetch("/api/dashboard/conversations", {
-          cache: "no-store",
-        });
+      setLoadError("");
 
-        if (!response.ok) {
-          throw new Error("No se pudieron cargar las conversaciones.");
-        }
+      const response = await fetch("/api/dashboard/conversations", {
+        cache: "no-store",
+      });
 
-        const json = await response.json();
+      if (!response.ok) {
+        throw new Error("No se pudieron cargar las conversaciones.");
+      }
 
-        setConversations(json.conversations || []);
-      } catch (error) {
-        setLoadError(
-          error instanceof Error
-            ? error.message
-            : "Ocurrió un error cargando el dashboard."
-        );
-      } finally {
+      const json = await response.json();
+
+      setConversations(json.conversations || []);
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Ocurrió un error cargando el dashboard."
+      );
+    } finally {
+      if (showLoading) {
         setLoading(false);
       }
     }
+  }
 
-    loadConversations();
+  useEffect(() => {
+    loadConversations(true);
+
+    const intervalId = window.setInterval(() => {
+      loadConversations(false);
+    }, 60000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, []);
+
+  async function assignConversation(
+    conversationId: string,
+    assignedTo: Assignee
+  ) {
+    try {
+      setActionError("");
+      setAssigningConversationId(conversationId);
+
+      const response = await fetch(
+        "/api/dashboard/conversations/assign",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            assigned_to: assignedTo,
+          }),
+        }
+      );
+
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          body.details || body.error || "No se pudo guardar la asignación."
+        );
+      }
+
+      setConversations((currentConversations) =>
+        currentConversations.map((conversation) => {
+          if (conversation.conversation_id !== conversationId) {
+            return conversation;
+          }
+
+          const isSofi = assignedTo === "sofi";
+
+          return {
+            ...conversation,
+            assigned_to: assignedTo,
+            queue: assignedTo,
+            needs_sofi: isSofi,
+            needs_admin: !isSofi,
+            assignment_locked: true,
+            assignment_source: "manual",
+            updated_at: body.conversation.updated_at,
+          };
+        })
+      );
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo guardar la asignación."
+      );
+    } finally {
+      setAssigningConversationId(null);
+    }
+  }
 
   const filteredConversations = useMemo(() => {
     const query = normalizeText(search);
 
     return conversations
       .filter((conversation) => {
-        if (onlyPending && !conversation.needs_response) {
+        if (onlyPending && !isActiveConversation(conversation)) {
           return false;
         }
 
@@ -639,6 +894,9 @@ export default function DashboardPage() {
           conversation.category,
           conversation.product,
           conversation.intent,
+          conversation.resolution_alert,
+          ...(conversation.unresolved_items || []),
+          ...(conversation.open_requests || []),
         ]
           .filter(Boolean)
           .join(" ")
@@ -651,28 +909,28 @@ export default function DashboardPage() {
       );
   }, [conversations, onlyPending, search]);
 
-  const urgent = filteredConversations.filter(
+  const activeConversations = filteredConversations.filter(
+    isActiveConversation
+  );
+
+  const urgent = activeConversations.filter(
     (conversation) => getQueue(conversation) === "urgent"
   );
 
-  const sofi = filteredConversations.filter(
+  const sofi = activeConversations.filter(
     (conversation) => getQueue(conversation) === "sofi"
   );
 
-  const admin = filteredConversations.filter(
+  const admin = activeConversations.filter(
     (conversation) => getQueue(conversation) === "admin"
   );
 
-  const unassigned = filteredConversations.filter(
+  const unassigned = activeConversations.filter(
     (conversation) => getQueue(conversation) === "unassigned"
   );
 
-  const answered = conversations
-    .filter(
-      (conversation) =>
-        !conversation.needs_response ||
-        ["answered", "closed"].includes(normalizeText(conversation.status))
-    )
+  const resolved = conversations
+    .filter(isResolvedConversation)
     .sort(
       (a, b) =>
         new Date(b.updated_at || 0).getTime() -
@@ -682,24 +940,33 @@ export default function DashboardPage() {
   const botWaiting = conversations.filter(
     (conversation) =>
       conversation.status === "bot_answered" &&
-      conversation.needs_response
+      isActiveConversation(conversation)
   ).length;
 
   const highTicket = conversations.filter(
     (conversation) =>
-      conversation.needs_response &&
+      isActiveConversation(conversation) &&
       normalizeText(conversation.category) === "high_ticket"
   ).length;
 
+  const incompleteResponses = conversations.filter(
+    (conversation) =>
+      normalizeText(conversation.resolution_status) ===
+        "answered_pending_resolution" ||
+      normalizeText(conversation.resolution_status) ===
+        "needs_follow_up"
+  ).length;
+
   const waitingConversations = conversations.filter(
-    (conversation) => conversation.needs_response
+    isActiveConversation
   );
 
   const averageWaitMinutes =
     waitingConversations.length > 0
       ? Math.round(
           waitingConversations.reduce(
-            (sum, conversation) => sum + minutesWaiting(conversation),
+            (sum, conversation) =>
+              sum + minutesWaiting(conversation),
             0
           ) / waitingConversations.length
         )
@@ -717,14 +984,15 @@ export default function DashboardPage() {
           <h1>Centro de conversaciones</h1>
 
           <p>
-            Prioriza ventas, atiende clientas y decide quién debe responder.
+            Prioriza ventas, atiende clientas y verifica que cada solicitud
+            quede realmente resuelta.
           </p>
         </div>
 
         <div className="header-actions">
           <div className="live-indicator">
             <span />
-            Datos en vivo
+            Actualización automática
           </div>
 
           <a href="/api/dashboard/logout" className="logout-button">
@@ -759,10 +1027,10 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          label="Bot respondió"
-          value={botWaiting}
-          description="Todavía falta respuesta humana"
-          icon={<Bot size={20} />}
+          label="Respuestas incompletas"
+          value={incompleteResponses}
+          description="Se contestó, pero todavía falta algo"
+          icon={<AlertTriangle size={20} />}
           tone="bot"
         />
 
@@ -777,7 +1045,7 @@ export default function DashboardPage() {
         <MetricCard
           label="Espera promedio"
           value={formatWaitingTime(averageWaitMinutes)}
-          description="Conversaciones pendientes"
+          description={`${botWaiting} conversaciones con bot`}
           icon={<Clock3 size={20} />}
           tone="time"
         />
@@ -818,11 +1086,11 @@ export default function DashboardPage() {
           </button>
 
           <button
-            className={activeTab === "answered" ? "active" : ""}
-            onClick={() => setActiveTab("answered")}
+            className={activeTab === "resolved" ? "active" : ""}
+            onClick={() => setActiveTab("resolved")}
           >
             <CheckCircle2 size={16} />
-            Contestadas
+            Resueltas
           </button>
         </div>
 
@@ -845,10 +1113,17 @@ export default function DashboardPage() {
               onChange={(event) => setOnlyPending(event.target.checked)}
             />
 
-            Solo pendientes
+            Solo activas
           </label>
         </div>
       </section>
+
+      {actionError && (
+        <section className="action-error">
+          <XCircle size={18} />
+          <span>{actionError}</span>
+        </section>
+      )}
 
       {loading && (
         <section className="page-state">
@@ -873,6 +1148,8 @@ export default function DashboardPage() {
               conversations={urgent}
               icon={<AlertTriangle size={21} />}
               tone="urgent"
+              assigningConversationId={assigningConversationId}
+              onAssign={assignConversation}
             />
           )}
 
@@ -883,6 +1160,8 @@ export default function DashboardPage() {
               conversations={sofi}
               icon={<UserRound size={21} />}
               tone="sofi"
+              assigningConversationId={assigningConversationId}
+              onAssign={assignConversation}
             />
           )}
 
@@ -893,26 +1172,32 @@ export default function DashboardPage() {
               conversations={admin}
               icon={<Headphones size={21} />}
               tone="admin"
+              assigningConversationId={assigningConversationId}
+              onAssign={assignConversation}
             />
           )}
 
           {activeTab === "overview" && unassigned.length > 0 && (
             <QueueSection
               title="Sin asignar"
-              description="Conversaciones pendientes de clasificación."
+              description="Conversaciones activas pendientes de clasificación."
               conversations={unassigned}
               icon={<MessageCircle size={21} />}
               tone="neutral"
+              assigningConversationId={assigningConversationId}
+              onAssign={assignConversation}
             />
           )}
 
-          {activeTab === "answered" && (
+          {activeTab === "resolved" && (
             <QueueSection
-              title="Contestadas"
-              description="Conversaciones atendidas o cerradas recientemente."
-              conversations={answered}
+              title="Resueltas"
+              description="Solicitudes confirmadas como resueltas o conversaciones cerradas."
+              conversations={resolved}
               icon={<CheckCircle2 size={21} />}
               tone="neutral"
+              assigningConversationId={assigningConversationId}
+              onAssign={assignConversation}
             />
           )}
         </div>
@@ -1072,8 +1357,8 @@ export default function DashboardPage() {
         }
 
         .metric-bot .metric-icon {
-          color: #7a5af8;
-          background: #f0edff;
+          color: #b54708;
+          background: #fef0c7;
         }
 
         .metric-sales .metric-icon {
@@ -1163,6 +1448,20 @@ export default function DashboardPage() {
           font-size: 12px;
           font-weight: 700;
           white-space: nowrap;
+        }
+
+        .action-error {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 18px;
+          padding: 12px 14px;
+          border: 1px solid #fecaca;
+          border-radius: 12px;
+          color: #b42318;
+          background: #fff1f2;
+          font-size: 13px;
+          font-weight: 700;
         }
 
         .queues-container {
@@ -1454,7 +1753,18 @@ export default function DashboardPage() {
           background: #fef0c7;
         }
 
+        .status-incomplete,
+        .status-follow_up {
+          color: #b42318;
+          background: #fee4e2;
+        }
+
         .status-answered {
+          color: #175cd3;
+          background: #eaf2ff;
+        }
+
+        .status-resolved {
           color: #067647;
           background: #dcfae6;
         }
@@ -1482,6 +1792,56 @@ export default function DashboardPage() {
         .automation-pill {
           color: #6941c6;
           background: #eee7ff;
+        }
+
+        .resolution-alert {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 13px;
+          border: 1px solid #fda29b;
+          border-radius: 14px;
+          color: #b42318;
+          background: #fff4ed;
+        }
+
+        .resolution-alert svg {
+          flex: 0 0 auto;
+          margin-top: 1px;
+        }
+
+        .resolution-alert strong {
+          display: block;
+          font-size: 12px;
+        }
+
+        .resolution-alert p {
+          margin: 4px 0 0;
+          color: #912018;
+          font-size: 11px;
+          line-height: 1.45;
+        }
+
+        .unresolved-panel {
+          padding: 12px 14px;
+          border-radius: 13px;
+          background: #fffaeb;
+        }
+
+        .unresolved-panel span {
+          display: block;
+          color: #b54708;
+          font-size: 10px;
+          font-weight: 850;
+          text-transform: uppercase;
+        }
+
+        .unresolved-panel ul {
+          margin: 7px 0 0;
+          padding-left: 18px;
+          color: #7a2e0e;
+          font-size: 11px;
+          line-height: 1.5;
         }
 
         .message-panel {
@@ -1595,6 +1955,43 @@ export default function DashboardPage() {
           margin: 0;
           font-size: 11px;
           line-height: 1.45;
+        }
+
+        .assignment-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+
+        .assignment-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          padding: 10px 12px;
+          border: 1px solid #e4e4e7;
+          border-radius: 10px;
+          color: #3f3f46;
+          background: white;
+          font-size: 11px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .assignment-button:hover:not(:disabled) {
+          border-color: #a1a1aa;
+          background: #fafafa;
+        }
+
+        .assignment-button:disabled {
+          opacity: 0.55;
+          cursor: wait;
+        }
+
+        .assignment-button.assignment-active {
+          border-color: #c4b5fd;
+          color: #6941c6;
+          background: #f5f3ff;
         }
 
         .conversation-footer {
@@ -1778,8 +2175,9 @@ export default function DashboardPage() {
             flex-direction: column;
           }
 
-          .decision-grid {
-            grid-template-columns: 1fr 1fr;
+          .decision-grid,
+          .assignment-actions {
+            grid-template-columns: 1fr;
           }
 
           .queue-pill {

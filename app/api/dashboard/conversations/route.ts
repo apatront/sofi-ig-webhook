@@ -34,6 +34,8 @@ export async function GET() {
         needs_sofi,
         needs_admin,
         assigned_to,
+        assignment_locked,
+        assignment_source,
 
         lead_score,
         urgency_score,
@@ -43,11 +45,23 @@ export async function GET() {
         next_action,
         ai_reasoning,
         last_ai_analysis_at,
+        ai_analysis_status,
+        ai_analyzed_message_id,
+        ai_analysis_error,
 
         conversation_stage,
         conversion_status,
         estimated_value,
         customer_status,
+
+        resolution_status,
+        needs_resolution_review,
+        open_requests,
+        unresolved_items,
+        resolution_reason,
+        resolution_alert,
+        resolution_reviewed_at,
+        last_resolution_review_message_id,
 
         last_message_id,
         last_message_type,
@@ -84,20 +98,33 @@ export async function GET() {
       return NextResponse.json(
         {
           error: "Failed to fetch conversations",
+          details: error.message,
         },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({
-      conversations: data || [],
-    });
+    return NextResponse.json(
+      {
+        conversations: data || [],
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      }
+    );
   } catch (error) {
-    console.error("Dashboard conversations route error:", error);
+    const errorMessage =
+      error instanceof Error ? error.message : "Unexpected server error";
+
+    console.error("Dashboard conversations route error:", errorMessage);
 
     return NextResponse.json(
       {
         error: "Unexpected server error",
+        details: errorMessage,
       },
       { status: 500 }
     );
