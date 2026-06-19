@@ -26,7 +26,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Conversation = {
   conversation_id: string;
@@ -120,6 +120,16 @@ type DashboardTab =
 
 type QueueTone = "urgent" | "sofi" | "admin" | "personal" | "neutral";
 type Assignee = "sofi" | "admin";
+
+type ConversationMessage = {
+  message_id: string;
+  direction: string | null;
+  text: string | null;
+  transcription: string | null;
+  message_type: string | null;
+  outbound_type: string | null;
+  sent_at: string | null;
+};
 
 function normalizeText(value: string | null | undefined) {
   return (value || "").toLowerCase().trim();
@@ -438,6 +448,196 @@ function ExpandableText({
   );
 }
 
+
+function formatMessageTime(dateString: string | null) {
+  if (!dateString) return "";
+
+  const date = new Date(dateString);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("es-MX", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function getMessageContent(message: ConversationMessage) {
+  const text = message.text?.trim();
+  const transcription = message.transcription?.trim();
+
+  if (text) return text;
+  if (transcription) return transcription;
+
+  if (message.message_type === "audio") {
+    return "Nota de voz sin transcripción disponible.";
+  }
+
+  return "Mensaje sin contenido visible.";
+}
+
+function ConversationThread({
+  conversationId,
+}: {
+  conversationId: string;
+}) {
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const [messageError, setMessageError] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  async function loadMessages() {
+    try {
+      setLoadingMessages(true);
+      setMessageError("");
+
+      const response = await fetch(
+        `/api/dashboard/conversations/${encodeURIComponent(
+          conversationId
+        )}/messages`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          body.details ||
+            body.error ||
+            "No se pudo cargar la conversación."
+        );
+      }
+
+      setMessages(body.messages || []);
+      setMessagesLoaded(true);
+    } catch (error) {
+      setMessageError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cargar la conversación."
+      );
+    } finally {
+      setLoadingMessages(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!messagesLoaded || !scrollRef.current) {
+      return;
+    }
+
+    const container = scrollRef.current;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, messagesLoaded]);
+
+  if (!messagesLoaded) {
+    return (
+      <div className="conversation-thread conversation-thread-empty">
+        <div className="thread-heading">
+          <div>
+            <MessageCircle size={14} />
+            <span>Conversación</span>
+          </div>
+
+          <small>Últimos 30 mensajes</small>
+        </div>
+
+        {messageError && (
+          <p className="thread-error">{messageError}</p>
+        )}
+
+        <button
+          type="button"
+          className="load-thread-button"
+          disabled={loadingMessages}
+          onClick={loadMessages}
+        >
+          <MessageCircle size={15} />
+          {loadingMessages ? "Cargando..." : "Ver conversación"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="conversation-thread">
+      <div className="thread-heading">
+        <div>
+          <MessageCircle size={14} />
+          <span>Conversación</span>
+        </div>
+
+        <button
+          type="button"
+          className="refresh-thread-button"
+          disabled={loadingMessages}
+          onClick={loadMessages}
+        >
+          {loadingMessages ? "Actualizando..." : "Actualizar"}
+        </button>
+      </div>
+
+      <div className="thread-scroll" ref={scrollRef}>
+        {messages.length > 0 ? (
+          messages.map((message) => {
+            const isInbound = message.direction === "inbound";
+            const isAutomation =
+              !isInbound && message.outbound_type === "automation";
+
+            return (
+              <div
+                key={message.message_id}
+                className={`thread-message-row ${
+                  isInbound ? "thread-inbound" : "thread-outbound"
+                }`}
+              >
+                <div
+                  className={`thread-bubble ${
+                    isInbound
+                      ? "bubble-inbound"
+                      : isAutomation
+                        ? "bubble-automation"
+                        : "bubble-outbound"
+                  }`}
+                >
+                  {message.message_type === "audio" && (
+                    <span className="audio-message-label">
+                      <Mic size={12} />
+                      Nota de voz transcrita
+                    </span>
+                  )}
+
+                  <p>{getMessageContent(message)}</p>
+
+                  <small>
+                    {isInbound
+                      ? "Ella"
+                      : isAutomation
+                        ? "Bot"
+                        : "Sofi / equipo"}
+                    {formatMessageTime(message.sent_at)
+                      ? ` · ${formatMessageTime(message.sent_at)}`
+                      : ""}
+                  </small>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="thread-no-messages">
+            No hay mensajes disponibles.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RelationshipSignals({
   conversation,
 }: {
@@ -504,7 +704,6 @@ function ConversationCard({
   ) => Promise<void>;
 }) {
   const waiting = minutesWaiting(conversation);
-  const queueMeta = getQueueMeta(tone);
   const isPersonal = isPersonalConversation(conversation);
   const isAssigning = assigningConversationId === conversation.conversation_id;
   const isUpdatingPersonal =
@@ -569,11 +768,6 @@ function ConversationCard({
         </div>
 
         <div className="top-tags">
-          <span className={`compact-tag queue-tag queue-tag-${tone}`}>
-            {queueMeta.icon}
-            {queueMeta.label}
-          </span>
-
           {!isPersonal && (
             <>
               <span className="compact-tag score-tag">
@@ -639,28 +833,9 @@ function ConversationCard({
         </div>
       )}
 
-      <div className="message-panel">
-        <div className="panel-label">
-          {conversation.last_message_type === "audio" ? (
-            <>
-              <Mic size={13} />
-              Nota de voz
-            </>
-          ) : (
-            <>
-              <MessageCircle size={13} />
-              Último mensaje
-            </>
-          )}
-        </div>
-
-        <ExpandableText
-          text={
-            conversation.last_message_text || "Sin contenido disponible."
-          }
-          limit={220}
-        />
-      </div>
+      <ConversationThread
+        conversationId={conversation.conversation_id}
+      />
 
       {!isPersonal && (
         <div className="compact-summary">
@@ -717,41 +892,43 @@ function ConversationCard({
           </>
         )}
 
-        <button
-          type="button"
-          className={`action-button client-button ${
-            isClient ? "client-active" : ""
-          }`}
-          disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
-          onClick={() =>
-            onToggleClient(conversation.conversation_id, !isClient)
-          }
-        >
-          <Star size={14} fill={isClient ? "currentColor" : "none"} />
-          {isUpdatingClient
-            ? "Guardando..."
-            : isClient
-              ? "Quitar clienta"
-              : "Clienta"}
-        </button>
+        <div className="secondary-actions">
+          <button
+            type="button"
+            className={`action-button client-button ${
+              isClient ? "client-active" : ""
+            }`}
+            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+            onClick={() =>
+              onToggleClient(conversation.conversation_id, !isClient)
+            }
+          >
+            <Star size={14} fill={isClient ? "currentColor" : "none"} />
+            {isUpdatingClient
+              ? "Guardando..."
+              : isClient
+                ? "Quitar clienta"
+                : "Clienta"}
+          </button>
 
-        <button
-          type="button"
-          className={`action-button personal-button ${
-            isPersonal ? "personal-active" : ""
-          }`}
-          disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
-          onClick={() =>
-            onTogglePersonal(conversation.conversation_id, !isPersonal)
-          }
-        >
-          <Heart size={14} />
-          {isUpdatingPersonal
-            ? "Guardando..."
-            : isPersonal
-              ? "Sacar de personal"
-              : "Personal"}
-        </button>
+          <button
+            type="button"
+            className={`action-button personal-button ${
+              isPersonal ? "personal-active" : ""
+            }`}
+            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+            onClick={() =>
+              onTogglePersonal(conversation.conversation_id, !isPersonal)
+            }
+          >
+            <Heart size={14} />
+            {isUpdatingPersonal
+              ? "Guardando..."
+              : isPersonal
+                ? "Sacar"
+                : "Personal"}
+          </button>
+        </div>
 
         {instagramUrl ? (
           <a
@@ -764,7 +941,9 @@ function ConversationCard({
             <ArrowUpRight size={14} />
           </a>
         ) : (
-          <span className="action-button action-disabled">Sin perfil</span>
+          <span className="action-button action-disabled instagram-action">
+            Sin perfil
+          </span>
         )}
       </div>
 
@@ -2201,18 +2380,33 @@ export default function DashboardPage() {
           line-height: 1.4;
         }
 
-        .message-panel {
+        .conversation-thread {
+          min-width: 0;
+          height: 260px;
           padding: 10px;
-          border: 1px solid #ececef;
-          border-radius: 11px;
-          background: #fafafa;
+          border: 1px solid #e4e4e7;
+          border-radius: 12px;
+          background: #ffffff;
         }
 
-        .panel-label {
+        .conversation-thread-empty {
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+        }
+
+        .thread-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+
+        .thread-heading > div {
           display: flex;
           align-items: center;
           gap: 5px;
-          margin-bottom: 5px;
           color: #6941c6;
           font-size: 9px;
           font-weight: 850;
@@ -2220,12 +2414,147 @@ export default function DashboardPage() {
           text-transform: uppercase;
         }
 
-        .message-panel .expandable-text p {
-          margin: 0;
-          color: #27272a;
+        .thread-heading small {
+          color: #a1a1aa;
+          font-size: 9px;
+        }
+
+        .load-thread-button {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          width: 100%;
+          min-height: 42px;
+          margin: auto 0;
+          border: 1px solid #d8b4fe;
+          border-radius: 10px;
+          color: #6941c6;
+          background: #faf5ff;
           font-size: 11px;
-          line-height: 1.45;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .load-thread-button:hover:not(:disabled) {
+          background: #f3e8ff;
+        }
+
+        .load-thread-button:disabled,
+        .refresh-thread-button:disabled {
+          opacity: 0.55;
+          cursor: wait;
+        }
+
+        .refresh-thread-button {
+          padding: 0;
+          border: 0;
+          color: #6941c6;
+          background: transparent;
+          font-size: 9px;
+          font-weight: 800;
+          cursor: pointer;
+        }
+
+        .thread-scroll {
+          height: calc(100% - 27px);
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding: 5px 4px 7px;
+          border-radius: 9px;
+          background:
+            linear-gradient(#fafafa 30%, rgba(250, 250, 250, 0)),
+            linear-gradient(rgba(250, 250, 250, 0), #fafafa 70%) 0 100%,
+            #fafafa;
+          scrollbar-width: thin;
+          scrollbar-color: #d4d4d8 transparent;
+        }
+
+        .thread-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        .thread-scroll::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: #d4d4d8;
+        }
+
+        .thread-message-row {
+          display: flex;
+          margin: 5px 0;
+        }
+
+        .thread-inbound {
+          justify-content: flex-start;
+        }
+
+        .thread-outbound {
+          justify-content: flex-end;
+        }
+
+        .thread-bubble {
+          max-width: 82%;
+          padding: 8px 10px;
+          border-radius: 15px;
+          box-shadow: 0 1px 2px rgba(24, 24, 27, 0.04);
+        }
+
+        .bubble-inbound {
+          border-bottom-left-radius: 5px;
+          color: #27272a;
+          background: #f1f1f3;
+        }
+
+        .bubble-outbound {
+          border-bottom-right-radius: 5px;
+          color: white;
+          background: linear-gradient(135deg, #833ab4, #c13584);
+        }
+
+        .bubble-automation {
+          border-bottom-right-radius: 5px;
+          color: #5b21b6;
+          background: #ede9fe;
+        }
+
+        .thread-bubble p {
+          margin: 0;
+          font-size: 10px;
+          line-height: 1.42;
           white-space: pre-wrap;
+          overflow-wrap: anywhere;
+        }
+
+        .thread-bubble small {
+          display: block;
+          margin-top: 4px;
+          font-size: 8px;
+          opacity: 0.68;
+        }
+
+        .audio-message-label {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          margin-bottom: 4px;
+          font-size: 8px;
+          font-weight: 850;
+          text-transform: uppercase;
+        }
+
+        .thread-error {
+          margin: 8px 0;
+          color: #b42318;
+          font-size: 10px;
+        }
+
+        .thread-no-messages {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: #a1a1aa;
+          font-size: 10px;
         }
 
         .compact-summary {
@@ -2281,8 +2610,14 @@ export default function DashboardPage() {
         }
 
         .card-actions {
-          display: flex;
-          flex-wrap: wrap;
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 7px;
+        }
+
+        .secondary-actions {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 6px;
         }
 
@@ -2291,6 +2626,7 @@ export default function DashboardPage() {
           align-items: center;
           justify-content: center;
           gap: 5px;
+          width: 100%;
           min-height: 34px;
           padding: 8px 10px;
           border: 1px solid #e4e4e7;
@@ -2340,7 +2676,8 @@ export default function DashboardPage() {
         }
 
         .instagram-action {
-          margin-left: auto;
+          width: 100%;
+          margin-left: 0;
         }
 
         .action-disabled {
@@ -2497,10 +2834,10 @@ export default function DashboardPage() {
           grid-area: status;
         }
 
-        .conversation-card .message-panel {
+        .conversation-card .conversation-thread {
           grid-area: message;
           min-width: 0;
-          height: 100%;
+          height: 260px;
         }
 
         .conversation-card .compact-summary {
@@ -2515,6 +2852,7 @@ export default function DashboardPage() {
           display: grid;
           grid-template-columns: 1fr;
           align-content: start;
+          gap: 7px;
         }
 
         .conversation-card .instagram-action {
@@ -2539,7 +2877,7 @@ export default function DashboardPage() {
           max-width: 100%;
         }
 
-        .conversation-card .message-panel .expandable-text p,
+        .conversation-card .conversation-thread,
         .conversation-card .compact-summary .expandable-text p {
           display: -webkit-box;
           overflow: hidden;
@@ -2557,7 +2895,7 @@ export default function DashboardPage() {
           }
 
           .conversation-card .card-actions {
-            grid-template-columns: repeat(5, minmax(0, auto));
+            grid-template-columns: 1fr;
           }
         }
 
@@ -2568,7 +2906,9 @@ export default function DashboardPage() {
           }
 
           .conversation-card .card-actions {
-            display: flex;
+            display: grid;
+            grid-template-columns: 1fr;
+            width: 100%;
           }
 
           .conversation-card .card-footer {
