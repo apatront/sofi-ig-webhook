@@ -2,10 +2,9 @@
 
 import {
   AlertTriangle,
-  ArrowRight,
+  ArrowUpRight,
   Bot,
   CheckCircle2,
-  ChevronRight,
   CircleDollarSign,
   Clock3,
   Headphones,
@@ -19,6 +18,7 @@ import {
   UsersRound,
   XCircle,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 type Conversation = {
@@ -81,6 +81,8 @@ type Conversation = {
 };
 
 type DashboardTab = "overview" | "urgent" | "sofi" | "admin" | "answered";
+
+type QueueTone = "urgent" | "sofi" | "admin" | "neutral";
 
 function normalizeText(value: string | null | undefined) {
   return (value || "").toLowerCase().trim();
@@ -185,6 +187,7 @@ function getOperationalScore(conversation: Conversation) {
   }
 
   let score = 0;
+
   const queue = getQueue(conversation);
   const waitingMinutes = minutesWaiting(conversation);
   const priority = normalizeText(conversation.priority);
@@ -199,6 +202,7 @@ function getOperationalScore(conversation: Conversation) {
   if (priority === "medium") score += 40;
 
   if (category === "high_ticket") score += 80;
+
   if (conversation.needs_sofi) score += 60;
   if (conversation.needs_admin) score += 40;
 
@@ -248,9 +252,9 @@ function getStatusLabel(conversation: Conversation) {
 function getPriorityLabel(priority: string | null) {
   const normalized = normalizeText(priority);
 
-  if (normalized === "high") return "Alta";
-  if (normalized === "medium") return "Media";
-  if (normalized === "low") return "Baja";
+  if (normalized === "high") return "Prioridad alta";
+  if (normalized === "medium") return "Prioridad media";
+  if (normalized === "low") return "Prioridad baja";
 
   return "Sin clasificar";
 }
@@ -263,7 +267,267 @@ function humanize(value: string | null) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function ConversationTable({
+function getQueueMeta(tone: QueueTone) {
+  if (tone === "urgent") {
+    return {
+      label: "Urgente",
+      icon: <AlertTriangle size={16} />,
+    };
+  }
+
+  if (tone === "sofi") {
+    return {
+      label: "Sofi",
+      icon: <UserRound size={16} />,
+    };
+  }
+
+  if (tone === "admin") {
+    return {
+      label: "Admin",
+      icon: <Headphones size={16} />,
+    };
+  }
+
+  return {
+    label: "Sin asignar",
+    icon: <MessageCircle size={16} />,
+  };
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+  icon,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  description: string;
+  icon: ReactNode;
+  tone: string;
+}) {
+  return (
+    <article className={`metric-card metric-${tone}`}>
+      <div className="metric-icon">{icon}</div>
+
+      <div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{description}</small>
+      </div>
+    </article>
+  );
+}
+
+function ConversationCard({
+  conversation,
+  tone,
+}: {
+  conversation: Conversation;
+  tone: QueueTone;
+}) {
+  const waiting = minutesWaiting(conversation);
+  const queueMeta = getQueueMeta(tone);
+
+  const instagramUrl = conversation.external_username
+    ? `https://www.instagram.com/${conversation.external_username}/`
+    : null;
+
+  return (
+    <article className={`conversation-card conversation-${tone}`}>
+      <div className="conversation-top-row">
+        <div className="profile-area">
+          <div className="instagram-avatar-ring">
+            {conversation.external_profile_pic ? (
+              <img
+                src={conversation.external_profile_pic}
+                alt={getDisplayName(conversation)}
+                className="instagram-avatar"
+              />
+            ) : (
+              <div className="instagram-avatar avatar-fallback">
+                {getDisplayName(conversation).slice(0, 1)}
+              </div>
+            )}
+          </div>
+
+          <div className="profile-copy">
+            <div className="username-row">
+              <strong>{getDisplayName(conversation)}</strong>
+
+              {conversation.is_verified_user && (
+                <ShieldCheck size={16} className="verified-icon" />
+              )}
+            </div>
+
+            <span className="real-name">
+              {conversation.external_name || "Sin nombre"}
+            </span>
+
+            <div className="profile-signals">
+              {conversation.is_user_follow_business && (
+                <span>Sigue a Sofi</span>
+              )}
+
+              {conversation.is_business_follow_user && (
+                <span>Sofi la sigue</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className={`queue-pill queue-pill-${tone}`}>
+          {queueMeta.icon}
+          {queueMeta.label}
+        </div>
+      </div>
+
+      <div className="conversation-status-row">
+        <span
+          className={`status-pill status-${normalizeText(
+            conversation.status
+          )}`}
+        >
+          {getStatusLabel(conversation)}
+        </span>
+
+        <span
+          className={`priority-pill priority-${normalizeText(
+            conversation.priority
+          )}`}
+        >
+          {getPriorityLabel(conversation.priority)}
+        </span>
+
+        {conversation.last_outbound_type === "automation" && (
+          <span className="automation-pill">
+            <Bot size={13} />
+            Bot
+          </span>
+        )}
+      </div>
+
+      <div className="message-panel">
+        <div className="panel-label">
+          {conversation.last_message_type === "audio" ? (
+            <>
+              <Mic size={14} />
+              Nota de voz transcrita
+            </>
+          ) : (
+            <>
+              <MessageCircle size={14} />
+              Último mensaje
+            </>
+          )}
+        </div>
+
+        <p>
+          {conversation.last_message_text || "Sin contenido disponible."}
+        </p>
+
+        <span className="direction-label">
+          {conversation.last_message_direction === "inbound"
+            ? "Mensaje recibido"
+            : "Mensaje enviado"}
+        </span>
+      </div>
+
+      <div className="decision-grid">
+        <div className="decision-box">
+          <span className="decision-label">Categoría</span>
+          <strong>{humanize(conversation.category)}</strong>
+
+          {conversation.product && (
+            <small>{humanize(conversation.product)}</small>
+          )}
+        </div>
+
+        <div className="decision-box">
+          <span className="decision-label">Intención</span>
+          <strong>{humanize(conversation.intent)}</strong>
+
+          {conversation.sentiment && (
+            <small>{humanize(conversation.sentiment)}</small>
+          )}
+        </div>
+
+        <div className="decision-box">
+          <span className="decision-label">Lead score</span>
+          <strong>{conversation.lead_score || 0}/100</strong>
+          <small>Potencial comercial</small>
+        </div>
+
+        <div className="decision-box">
+          <span className="decision-label">Urgencia</span>
+          <strong>{conversation.urgency_score || 0}/100</strong>
+          <small>Riesgo de espera</small>
+        </div>
+      </div>
+
+      <div className="summary-panel">
+        <div className="summary-section">
+          <span>Resumen</span>
+
+          <p>
+            {conversation.summary ||
+              "Pendiente de análisis con inteligencia artificial."}
+          </p>
+        </div>
+
+        <div className="next-action-section">
+          <span>Siguiente acción</span>
+
+          <p>
+            {conversation.next_action ||
+              "Revisar la conversación y definir el siguiente paso."}
+          </p>
+        </div>
+      </div>
+
+      <div className="conversation-footer">
+        <div
+          className={`waiting-indicator ${
+            waiting >= 180 ? "waiting-danger" : ""
+          }`}
+        >
+          <Clock3 size={16} />
+
+          <div>
+            <strong>{formatWaitingTime(waiting)}</strong>
+            <span>esperando respuesta</span>
+          </div>
+        </div>
+
+        <div className="footer-right">
+          <span className="updated-label">
+            {formatDate(conversation.updated_at)}
+          </span>
+
+          {instagramUrl ? (
+            <a
+              href={instagramUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="instagram-button"
+            >
+              Abrir Instagram
+              <ArrowUpRight size={16} />
+            </a>
+          ) : (
+            <span className="instagram-button instagram-button-disabled">
+              Sin perfil
+            </span>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function QueueSection({
   title,
   description,
   conversations,
@@ -273,212 +537,43 @@ function ConversationTable({
   title: string;
   description: string;
   conversations: Conversation[];
-  icon: React.ReactNode;
-  tone: "urgent" | "sofi" | "admin" | "neutral";
+  icon: ReactNode;
+  tone: QueueTone;
 }) {
   return (
-    <section className={`queue-card queue-${tone}`}>
-      <div className="queue-header">
-        <div className="queue-title-group">
-          <div className={`queue-icon queue-icon-${tone}`}>{icon}</div>
+    <section className={`queue-section queue-section-${tone}`}>
+      <div className="queue-section-header">
+        <div className={`queue-section-icon queue-section-icon-${tone}`}>
+          {icon}
+        </div>
 
-          <div>
-            <div className="queue-title-row">
-              <h2>{title}</h2>
-              <span className="queue-count">{conversations.length}</span>
-            </div>
-
-            <p>{description}</p>
+        <div>
+          <div className="queue-heading-row">
+            <h2>{title}</h2>
+            <span>{conversations.length}</span>
           </div>
+
+          <p>{description}</p>
         </div>
       </div>
 
-      <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Persona</th>
-              <th>Decisión</th>
-              <th>Último mensaje</th>
-              <th>Contexto</th>
-              <th>Esperando</th>
-              <th />
-            </tr>
-          </thead>
-
-          <tbody>
-            {conversations.map((conversation) => {
-              const waiting = minutesWaiting(conversation);
-
-              return (
-                <tr key={conversation.conversation_id}>
-                  <td>
-                    <div className="person-cell">
-                      {conversation.external_profile_pic ? (
-                        <img
-                          src={conversation.external_profile_pic}
-                          alt=""
-                          className="avatar"
-                        />
-                      ) : (
-                        <div className="avatar avatar-fallback">
-                          {getDisplayName(conversation).slice(0, 1)}
-                        </div>
-                      )}
-
-                      <div>
-                        <div className="person-name-row">
-                          <span className="person-username">
-                            {getDisplayName(conversation)}
-                          </span>
-
-                          {conversation.is_verified_user && (
-                            <ShieldCheck size={15} className="verified-icon" />
-                          )}
-                        </div>
-
-                        <div className="person-real-name">
-                          {conversation.external_name || "Sin nombre"}
-                        </div>
-
-                        <div className="person-signals">
-                          {conversation.is_user_follow_business && (
-                            <span>Sigue a Sofi</span>
-                          )}
-
-                          {conversation.last_outbound_type === "automation" && (
-                            <span className="bot-signal">
-                              <Bot size={12} />
-                              Bot
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-
-                  <td>
-                    <div className="decision-cell">
-                      <span
-                        className={`status-badge status-${normalizeText(
-                          conversation.status
-                        )}`}
-                      >
-                        {getStatusLabel(conversation)}
-                      </span>
-
-                      <span
-                        className={`priority-badge priority-${normalizeText(
-                          conversation.priority
-                        )}`}
-                      >
-                        {getPriorityLabel(conversation.priority)}
-                      </span>
-
-                      <div className="score-row">
-                        <span>Lead {conversation.lead_score || 0}</span>
-                        <span>Urgencia {conversation.urgency_score || 0}</span>
-                      </div>
-                    </div>
-                  </td>
-
-                  <td>
-                    <div className="message-cell">
-                      {conversation.last_message_type === "audio" && (
-                        <div className="voice-label">
-                          <Mic size={13} />
-                          Nota de voz transcrita
-                        </div>
-                      )}
-
-                      <p>
-                        {conversation.last_message_text ||
-                          "Sin contenido disponible"}
-                      </p>
-
-                      <span className="message-direction">
-                        {conversation.last_message_direction === "inbound"
-                          ? "Recibido"
-                          : "Enviado"}
-                      </span>
-                    </div>
-                  </td>
-
-                  <td>
-                    <div className="context-cell">
-                      <span className="category-badge">
-                        {humanize(conversation.category)}
-                      </span>
-
-                      {conversation.product && (
-                        <span className="product-label">
-                          {humanize(conversation.product)}
-                        </span>
-                      )}
-
-                      <p className="summary">
-                        {conversation.summary ||
-                          "Pendiente de análisis con inteligencia artificial."}
-                      </p>
-
-                      <div className="next-action">
-                        <ArrowRight size={13} />
-                        <span>
-                          {conversation.next_action ||
-                            "Revisar y definir siguiente acción."}
-                        </span>
-                      </div>
-                    </div>
-                  </td>
-
-                  <td>
-                    <div
-                      className={`waiting-cell ${
-                        waiting >= 180 ? "waiting-risk" : ""
-                      }`}
-                    >
-                      <Clock3 size={15} />
-                      <strong>{formatWaitingTime(waiting)}</strong>
-
-                      <span>{formatDate(conversation.updated_at)}</span>
-                    </div>
-                  </td>
-
-                  <td>
-                    {conversation.external_username ? (
-                      <a
-                        className="profile-button"
-                        href={`https://www.instagram.com/${conversation.external_username}/`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Abrir perfil en Instagram"
-                      >
-                        <ChevronRight size={18} />
-                      </a>
-                    ) : (
-                      <span className="profile-button profile-disabled">
-                        <ChevronRight size={18} />
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-
-            {conversations.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  <div className="empty-state">
-                    <CheckCircle2 size={28} />
-                    <strong>No hay conversaciones en esta cola.</strong>
-                    <span>Todo está bajo control.</span>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {conversations.length > 0 ? (
+        <div className="conversation-grid">
+          {conversations.map((conversation) => (
+            <ConversationCard
+              key={conversation.conversation_id}
+              conversation={conversation}
+              tone={tone}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <CheckCircle2 size={30} />
+          <strong>No hay conversaciones en esta sección.</strong>
+          <span>Todo está bajo control.</span>
+        </div>
+      )}
     </section>
   );
 }
@@ -610,14 +705,6 @@ export default function DashboardPage() {
         )
       : 0;
 
-  const visibleSections = {
-    urgent:
-      activeTab === "overview" || activeTab === "urgent" ? urgent : [],
-    sofi: activeTab === "overview" || activeTab === "sofi" ? sofi : [],
-    admin: activeTab === "overview" || activeTab === "admin" ? admin : [],
-    unassigned: activeTab === "overview" ? unassigned : [],
-  };
-
   return (
     <main className="dashboard-page">
       <header className="dashboard-header">
@@ -647,77 +734,53 @@ export default function DashboardPage() {
       </header>
 
       <section className="metrics-grid">
-        <div className="metric-card metric-danger">
-          <div className="metric-icon">
-            <AlertTriangle size={20} />
-          </div>
+        <MetricCard
+          label="Urgentes"
+          value={urgent.length}
+          description="Requieren acción inmediata"
+          icon={<AlertTriangle size={20} />}
+          tone="danger"
+        />
 
-          <div>
-            <span>Urgentes</span>
-            <strong>{urgent.length}</strong>
-            <small>Requieren acción inmediata</small>
-          </div>
-        </div>
+        <MetricCard
+          label="Pendientes de Sofi"
+          value={sofi.length}
+          description="Venta, confianza y relación"
+          icon={<UserRound size={20} />}
+          tone="sofi"
+        />
 
-        <div className="metric-card metric-sofi">
-          <div className="metric-icon">
-            <UserRound size={20} />
-          </div>
+        <MetricCard
+          label="Pendientes de Admin"
+          value={admin.length}
+          description="Pagos, acceso y operación"
+          icon={<Headphones size={20} />}
+          tone="admin"
+        />
 
-          <div>
-            <span>Pendientes de Sofi</span>
-            <strong>{sofi.length}</strong>
-            <small>Venta, confianza y relación</small>
-          </div>
-        </div>
+        <MetricCard
+          label="Bot respondió"
+          value={botWaiting}
+          description="Todavía falta respuesta humana"
+          icon={<Bot size={20} />}
+          tone="bot"
+        />
 
-        <div className="metric-card metric-admin">
-          <div className="metric-icon">
-            <Headphones size={20} />
-          </div>
+        <MetricCard
+          label="High-ticket activos"
+          value={highTicket}
+          description="Oportunidades comerciales"
+          icon={<CircleDollarSign size={20} />}
+          tone="sales"
+        />
 
-          <div>
-            <span>Pendientes de Admin</span>
-            <strong>{admin.length}</strong>
-            <small>Pagos, acceso y operación</small>
-          </div>
-        </div>
-
-        <div className="metric-card metric-bot">
-          <div className="metric-icon">
-            <Bot size={20} />
-          </div>
-
-          <div>
-            <span>Bot respondió</span>
-            <strong>{botWaiting}</strong>
-            <small>Todavía falta respuesta humana</small>
-          </div>
-        </div>
-
-        <div className="metric-card metric-sales">
-          <div className="metric-icon">
-            <CircleDollarSign size={20} />
-          </div>
-
-          <div>
-            <span>High-ticket activos</span>
-            <strong>{highTicket}</strong>
-            <small>Oportunidades comerciales</small>
-          </div>
-        </div>
-
-        <div className="metric-card metric-time">
-          <div className="metric-icon">
-            <Clock3 size={20} />
-          </div>
-
-          <div>
-            <span>Espera promedio</span>
-            <strong>{formatWaitingTime(averageWaitMinutes)}</strong>
-            <small>Conversaciones pendientes</small>
-          </div>
-        </div>
+        <MetricCard
+          label="Espera promedio"
+          value={formatWaitingTime(averageWaitMinutes)}
+          description="Conversaciones pendientes"
+          icon={<Clock3 size={20} />}
+          tone="time"
+        />
       </section>
 
       <section className="control-bar">
@@ -766,6 +829,7 @@ export default function DashboardPage() {
         <div className="filters">
           <label className="search-box">
             <Search size={17} />
+
             <input
               type="search"
               placeholder="Buscar nombre, mensaje, producto..."
@@ -780,6 +844,7 @@ export default function DashboardPage() {
               checked={onlyPending}
               onChange={(event) => setOnlyPending(event.target.checked)}
             />
+
             Solo pendientes
           </label>
         </div>
@@ -801,58 +866,52 @@ export default function DashboardPage() {
 
       {!loading && !loadError && (
         <div className="queues-container">
-          {visibleSections.urgent.length > 0 ||
-          activeTab === "urgent" ||
-          activeTab === "overview" ? (
-            <ConversationTable
+          {(activeTab === "overview" || activeTab === "urgent") && (
+            <QueueSection
               title="Urgentes"
-              description="Conversaciones con riesgo comercial, operativo o de servicio."
-              conversations={visibleSections.urgent}
-              icon={<AlertTriangle size={20} />}
+              description="Riesgo comercial, operativo o de servicio."
+              conversations={urgent}
+              icon={<AlertTriangle size={21} />}
               tone="urgent"
             />
-          ) : null}
+          )}
 
-          {visibleSections.sofi.length > 0 ||
-          activeTab === "sofi" ||
-          activeTab === "overview" ? (
-            <ConversationTable
+          {(activeTab === "overview" || activeTab === "sofi") && (
+            <QueueSection
               title="Sofi"
               description="Conversaciones donde la voz personal de Sofi puede mover la decisión."
-              conversations={visibleSections.sofi}
-              icon={<UserRound size={20} />}
+              conversations={sofi}
+              icon={<UserRound size={21} />}
               tone="sofi"
             />
-          ) : null}
+          )}
 
-          {visibleSections.admin.length > 0 ||
-          activeTab === "admin" ||
-          activeTab === "overview" ? (
-            <ConversationTable
+          {(activeTab === "overview" || activeTab === "admin") && (
+            <QueueSection
               title="Admin"
               description="Pagos, accesos, soporte, logística y seguimiento operativo."
-              conversations={visibleSections.admin}
-              icon={<Headphones size={20} />}
+              conversations={admin}
+              icon={<Headphones size={21} />}
               tone="admin"
             />
-          ) : null}
+          )}
 
-          {visibleSections.unassigned.length > 0 && (
-            <ConversationTable
+          {activeTab === "overview" && unassigned.length > 0 && (
+            <QueueSection
               title="Sin asignar"
-              description="Conversaciones que todavía necesitan clasificación."
-              conversations={visibleSections.unassigned}
-              icon={<MessageCircle size={20} />}
+              description="Conversaciones pendientes de clasificación."
+              conversations={unassigned}
+              icon={<MessageCircle size={21} />}
               tone="neutral"
             />
           )}
 
           {activeTab === "answered" && (
-            <ConversationTable
+            <QueueSection
               title="Contestadas"
-              description="Historial reciente de conversaciones atendidas o cerradas."
+              description="Conversaciones atendidas o cerradas recientemente."
               conversations={answered}
-              icon={<CheckCircle2 size={20} />}
+              icon={<CheckCircle2 size={21} />}
               tone="neutral"
             />
           )}
@@ -960,7 +1019,7 @@ export default function DashboardPage() {
           padding: 18px;
           border: 1px solid #e4e4e7;
           border-radius: 18px;
-          background: rgba(255, 255, 255, 0.92);
+          background: rgba(255, 255, 255, 0.94);
           box-shadow: 0 8px 30px rgba(24, 24, 27, 0.045);
         }
 
@@ -1032,7 +1091,7 @@ export default function DashboardPage() {
           align-items: center;
           justify-content: space-between;
           gap: 20px;
-          margin-bottom: 22px;
+          margin-bottom: 24px;
           padding: 11px;
           border: 1px solid #e4e4e7;
           border-radius: 16px;
@@ -1108,47 +1167,40 @@ export default function DashboardPage() {
 
         .queues-container {
           display: grid;
-          gap: 20px;
+          gap: 28px;
         }
 
-        .queue-card {
-          overflow: hidden;
+        .queue-section {
+          padding: 22px;
           border: 1px solid #e4e4e7;
-          border-radius: 20px;
-          background: white;
-          box-shadow: 0 8px 30px rgba(24, 24, 27, 0.045);
+          border-radius: 22px;
+          background: rgba(255, 255, 255, 0.7);
         }
 
-        .queue-urgent {
+        .queue-section-urgent {
           border-top: 4px solid #d92d20;
         }
 
-        .queue-sofi {
+        .queue-section-sofi {
           border-top: 4px solid #7f56d9;
         }
 
-        .queue-admin {
+        .queue-section-admin {
           border-top: 4px solid #2e90fa;
         }
 
-        .queue-neutral {
+        .queue-section-neutral {
           border-top: 4px solid #a1a1aa;
         }
 
-        .queue-header {
-          display: flex;
-          justify-content: space-between;
-          padding: 20px 22px;
-          border-bottom: 1px solid #f1f1f3;
-        }
-
-        .queue-title-group {
+        .queue-section-header {
           display: flex;
           align-items: flex-start;
           gap: 13px;
+          margin-bottom: 20px;
         }
 
-        .queue-icon {
+        .queue-section-icon {
           display: flex;
           align-items: center;
           justify-content: center;
@@ -1157,43 +1209,43 @@ export default function DashboardPage() {
           border-radius: 12px;
         }
 
-        .queue-icon-urgent {
+        .queue-section-icon-urgent {
           color: #b42318;
           background: #fee4e2;
         }
 
-        .queue-icon-sofi {
+        .queue-section-icon-sofi {
           color: #6941c6;
           background: #eee7ff;
         }
 
-        .queue-icon-admin {
+        .queue-section-icon-admin {
           color: #175cd3;
           background: #eaf2ff;
         }
 
-        .queue-icon-neutral {
+        .queue-section-icon-neutral {
           color: #52525b;
           background: #f4f4f5;
         }
 
-        .queue-title-row {
+        .queue-heading-row {
           display: flex;
           align-items: center;
           gap: 9px;
         }
 
-        .queue-title-row h2 {
+        .queue-heading-row h2 {
           margin: 0;
-          font-size: 19px;
+          font-size: 21px;
         }
 
-        .queue-count {
+        .queue-heading-row span {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          min-width: 25px;
-          height: 25px;
+          min-width: 26px;
+          height: 26px;
           padding: 0 7px;
           border-radius: 999px;
           background: #f4f4f5;
@@ -1201,62 +1253,92 @@ export default function DashboardPage() {
           font-weight: 800;
         }
 
-        .queue-header p {
+        .queue-section-header p {
           margin: 5px 0 0;
           color: #71717a;
           font-size: 13px;
         }
 
-        .table-scroll {
-          overflow-x: auto;
+        .conversation-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
         }
 
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 13px;
-        }
-
-        th {
-          padding: 12px 16px;
-          color: #71717a;
-          background: #fafafa;
-          border-bottom: 1px solid #ececef;
-          font-size: 11px;
-          font-weight: 800;
-          letter-spacing: 0.04em;
-          text-align: left;
-          text-transform: uppercase;
-          white-space: nowrap;
-        }
-
-        td {
-          padding: 16px;
-          border-bottom: 1px solid #f1f1f3;
-          vertical-align: top;
-        }
-
-        tbody tr:last-child td {
-          border-bottom: 0;
-        }
-
-        tbody tr:hover {
-          background: #fcfcfd;
-        }
-
-        .person-cell {
+        .conversation-card {
           display: flex;
-          gap: 11px;
-          min-width: 210px;
+          flex-direction: column;
+          gap: 16px;
+          padding: 20px;
+          border: 1px solid #e4e4e7;
+          border-radius: 20px;
+          background: white;
+          box-shadow: 0 8px 30px rgba(24, 24, 27, 0.05);
+          transition:
+            transform 160ms ease,
+            box-shadow 160ms ease;
         }
 
-        .avatar {
-          flex: 0 0 42px;
-          width: 42px;
-          height: 42px;
-          border-radius: 50%;
+        .conversation-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 14px 34px rgba(24, 24, 27, 0.08);
+        }
+
+        .conversation-urgent {
+          border-left: 4px solid #d92d20;
+        }
+
+        .conversation-sofi {
+          border-left: 4px solid #7f56d9;
+        }
+
+        .conversation-admin {
+          border-left: 4px solid #2e90fa;
+        }
+
+        .conversation-neutral {
+          border-left: 4px solid #a1a1aa;
+        }
+
+        .conversation-top-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+        }
+
+        .profile-area {
+          display: flex;
+          align-items: center;
+          gap: 13px;
+          min-width: 0;
+        }
+
+        .instagram-avatar-ring {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex: 0 0 58px;
+          width: 58px;
+          height: 58px;
+          padding: 3px;
+          border-radius: 999px;
+          background: linear-gradient(
+            135deg,
+            #feda75,
+            #fa7e1e,
+            #d62976,
+            #962fbf,
+            #4f5bd5
+          );
+        }
+
+        .instagram-avatar {
+          width: 52px;
+          height: 52px;
+          border: 3px solid white;
+          border-radius: 999px;
           object-fit: cover;
-          background: #f1f1f3;
+          background: #f4f4f5;
         }
 
         .avatar-fallback {
@@ -1265,77 +1347,105 @@ export default function DashboardPage() {
           justify-content: center;
           color: white;
           background: #27272a;
-          font-size: 15px;
+          font-size: 17px;
           font-weight: 850;
           text-transform: uppercase;
         }
 
-        .person-name-row {
+        .profile-copy {
+          min-width: 0;
+        }
+
+        .username-row {
           display: flex;
           align-items: center;
           gap: 5px;
         }
 
-        .person-username {
-          max-width: 170px;
+        .username-row strong {
+          max-width: 220px;
           overflow: hidden;
-          font-weight: 800;
+          font-size: 15px;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
         .verified-icon {
+          flex: 0 0 auto;
           color: #2e90fa;
         }
 
-        .person-real-name {
+        .real-name {
+          display: block;
           margin-top: 3px;
           color: #71717a;
           font-size: 12px;
         }
 
-        .person-signals {
+        .profile-signals {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px;
+          gap: 5px;
           margin-top: 6px;
         }
 
-        .person-signals span {
-          display: inline-flex;
-          align-items: center;
-          gap: 3px;
+        .profile-signals span {
           padding: 3px 6px;
           border-radius: 999px;
           color: #52525b;
           background: #f4f4f5;
-          font-size: 10px;
+          font-size: 9px;
           font-weight: 750;
         }
 
-        .bot-signal {
-          color: #6941c6 !important;
-          background: #eee7ff !important;
-        }
-
-        .decision-cell {
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 7px;
-          min-width: 130px;
-        }
-
-        .status-badge,
-        .priority-badge,
-        .category-badge {
+        .queue-pill {
           display: inline-flex;
           align-items: center;
-          padding: 5px 8px;
+          align-self: flex-start;
+          gap: 5px;
+          padding: 7px 9px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .queue-pill-urgent {
+          color: #b42318;
+          background: #fee4e2;
+        }
+
+        .queue-pill-sofi {
+          color: #6941c6;
+          background: #eee7ff;
+        }
+
+        .queue-pill-admin {
+          color: #175cd3;
+          background: #eaf2ff;
+        }
+
+        .queue-pill-neutral {
+          color: #52525b;
+          background: #f4f4f5;
+        }
+
+        .conversation-status-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+
+        .status-pill,
+        .priority-pill,
+        .automation-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 6px 9px;
           border-radius: 999px;
           font-size: 10px;
           font-weight: 800;
-          white-space: nowrap;
         }
 
         .status-pending,
@@ -1369,140 +1479,193 @@ export default function DashboardPage() {
           background: #f2f4f7;
         }
 
-        .score-row {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          color: #a1a1aa;
-          font-size: 10px;
+        .automation-pill {
+          color: #6941c6;
+          background: #eee7ff;
         }
 
-        .message-cell {
-          min-width: 260px;
-          max-width: 390px;
+        .message-panel {
+          padding: 14px;
+          border: 1px solid #ececef;
+          border-radius: 14px;
+          background: #fafafa;
         }
 
-        .voice-label {
+        .panel-label {
           display: flex;
           align-items: center;
           gap: 5px;
-          margin-bottom: 5px;
+          margin-bottom: 8px;
           color: #6941c6;
           font-size: 10px;
-          font-weight: 800;
+          font-weight: 850;
+          letter-spacing: 0.04em;
           text-transform: uppercase;
         }
 
-        .message-cell p {
+        .message-panel p {
           display: -webkit-box;
           overflow: hidden;
           margin: 0;
           color: #27272a;
           font-size: 13px;
-          line-height: 1.45;
+          line-height: 1.5;
           -webkit-box-orient: vertical;
-          -webkit-line-clamp: 3;
+          -webkit-line-clamp: 4;
         }
 
-        .message-direction {
+        .direction-label {
           display: block;
-          margin-top: 7px;
+          margin-top: 8px;
           color: #a1a1aa;
           font-size: 10px;
           font-weight: 700;
         }
 
-        .context-cell {
-          min-width: 290px;
-          max-width: 400px;
+        .decision-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
         }
 
-        .category-badge {
-          color: #344054;
-          background: #f2f4f7;
+        .decision-box {
+          min-height: 82px;
+          padding: 10px;
+          border: 1px solid #ececef;
+          border-radius: 12px;
+          background: white;
         }
 
-        .product-label {
-          display: inline-flex;
-          margin-left: 6px;
-          color: #6941c6;
-          font-size: 10px;
+        .decision-label {
+          display: block;
+          color: #a1a1aa;
+          font-size: 9px;
           font-weight: 800;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
         }
 
-        .summary {
-          margin: 8px 0 0;
-          color: #52525b;
+        .decision-box strong {
+          display: block;
+          margin-top: 5px;
           font-size: 12px;
+          line-height: 1.25;
+        }
+
+        .decision-box small {
+          display: block;
+          margin-top: 4px;
+          color: #71717a;
+          font-size: 9px;
+          line-height: 1.3;
+        }
+
+        .summary-panel {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+
+        .summary-section,
+        .next-action-section {
+          padding: 12px;
+          border-radius: 13px;
+        }
+
+        .summary-section {
+          background: #f4f4f5;
+        }
+
+        .next-action-section {
+          color: #175cd3;
+          background: #eff8ff;
+        }
+
+        .summary-section span,
+        .next-action-section span {
+          display: block;
+          margin-bottom: 5px;
+          font-size: 10px;
+          font-weight: 850;
+          text-transform: uppercase;
+        }
+
+        .summary-section p,
+        .next-action-section p {
+          margin: 0;
+          font-size: 11px;
           line-height: 1.45;
         }
 
-        .next-action {
+        .conversation-footer {
           display: flex;
-          align-items: flex-start;
-          gap: 5px;
-          margin-top: 8px;
-          color: #175cd3;
-          font-size: 11px;
-          font-weight: 750;
-          line-height: 1.4;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 14px;
+          padding-top: 14px;
+          border-top: 1px solid #f1f1f3;
         }
 
-        .next-action svg {
-          flex: 0 0 auto;
-          margin-top: 1px;
-        }
-
-        .waiting-cell {
+        .waiting-indicator {
           display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          gap: 4px;
-          min-width: 105px;
+          align-items: center;
+          gap: 8px;
           color: #52525b;
         }
 
-        .waiting-cell svg {
+        .waiting-indicator svg {
           color: #a1a1aa;
         }
 
-        .waiting-cell strong {
+        .waiting-indicator strong {
+          display: block;
           font-size: 14px;
         }
 
-        .waiting-cell span {
+        .waiting-indicator span {
+          display: block;
+          margin-top: 1px;
           color: #a1a1aa;
-          font-size: 10px;
+          font-size: 9px;
         }
 
-        .waiting-risk {
+        .waiting-danger,
+        .waiting-danger svg {
           color: #b42318;
         }
 
-        .waiting-risk svg {
-          color: #d92d20;
-        }
-
-        .profile-button {
+        .footer-right {
           display: flex;
           align-items: center;
-          justify-content: center;
-          width: 34px;
-          height: 34px;
+          gap: 10px;
+        }
+
+        .updated-label {
+          color: #a1a1aa;
+          font-size: 9px;
+        }
+
+        .instagram-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 9px 11px;
           border: 1px solid #e4e4e7;
           border-radius: 10px;
-          color: #52525b;
+          color: #27272a;
           background: white;
+          font-size: 11px;
+          font-weight: 800;
           text-decoration: none;
         }
 
-        .profile-button:hover {
-          color: #18181b;
+        .instagram-button:hover {
           border-color: #a1a1aa;
+          background: #fafafa;
         }
 
-        .profile-disabled {
-          opacity: 0.35;
+        .instagram-button-disabled {
+          opacity: 0.45;
         }
 
         .empty-state,
@@ -1533,9 +1696,19 @@ export default function DashboardPage() {
           background: #fff1f2;
         }
 
-        @media (max-width: 1400px) {
+        @media (max-width: 1500px) {
           .metrics-grid {
             grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .decision-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 1150px) {
+          .conversation-grid {
+            grid-template-columns: 1fr;
           }
 
           .control-bar {
@@ -1579,16 +1752,38 @@ export default function DashboardPage() {
           .search-box {
             width: 100%;
           }
+
+          .summary-panel {
+            grid-template-columns: 1fr;
+          }
+
+          .conversation-footer {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .footer-right {
+            width: 100%;
+            justify-content: space-between;
+          }
         }
 
-        @media (max-width: 520px) {
+        @media (max-width: 560px) {
           .metrics-grid {
             grid-template-columns: 1fr;
           }
 
-          .header-actions {
-            width: 100%;
-            justify-content: space-between;
+          .conversation-top-row {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .decision-grid {
+            grid-template-columns: 1fr 1fr;
+          }
+
+          .queue-pill {
+            align-self: flex-start;
           }
         }
       `}</style>
