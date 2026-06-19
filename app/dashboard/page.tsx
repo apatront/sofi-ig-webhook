@@ -15,6 +15,8 @@ type Conversation = {
   is_verified_user: boolean | null;
   status: string | null;
   needs_response: boolean | null;
+  last_message_id: string | null;
+  last_message_type: string | null;
   last_message_text: string | null;
   last_message_direction: string | null;
   last_user_message_at: string | null;
@@ -48,6 +50,8 @@ async function getConversations(): Promise<Conversation[]> {
       is_verified_user,
       status,
       needs_response,
+      last_message_id,
+      last_message_type,
       last_message_text,
       last_message_direction,
       last_user_message_at,
@@ -130,6 +134,14 @@ function getBadgeStyle(status: string | null, needsResponse: boolean | null) {
   };
 }
 
+function getMessageTypeLabel(messageType: string | null) {
+  if (messageType === "audio") return "Nota de voz";
+  if (messageType === "image") return "Imagen";
+  if (messageType === "video") return "Video";
+  if (messageType === "file") return "Archivo";
+  return "Texto";
+}
+
 export default async function DashboardPage() {
   const conversations = await getConversations();
 
@@ -156,10 +168,13 @@ export default async function DashboardPage() {
           <p style={styles.eyebrow}>Sofi IG Inbox</p>
           <h1 style={styles.title}>Dashboard de conversaciones</h1>
           <p style={styles.subtitle}>
-            Conversaciones reales capturadas desde Instagram, guardadas en
-            Supabase.
+            Conversaciones reales capturadas desde Instagram.
           </p>
         </div>
+
+        <a href="/api/dashboard/logout" style={styles.logoutLink}>
+          Cerrar sesión
+        </a>
       </section>
 
       <section style={styles.metricsGrid}>
@@ -204,6 +219,7 @@ export default async function DashboardPage() {
                 <th style={styles.th}>Usuario</th>
                 <th style={styles.th}>Estado</th>
                 <th style={styles.th}>Último mensaje</th>
+                <th style={styles.th}>Tipo</th>
                 <th style={styles.th}>Dirección</th>
                 <th style={styles.th}>Tipo salida</th>
                 <th style={styles.th}>Sigue</th>
@@ -256,9 +272,21 @@ export default async function DashboardPage() {
                   </td>
 
                   <td style={styles.td}>
-                    <div style={styles.messageText}>
-                      {conversation.last_message_text || "—"}
+                    <div style={styles.messageCell}>
+                      {conversation.last_message_type === "audio" && (
+                        <div style={styles.audioLabel}>🎤 Nota de voz</div>
+                      )}
+
+                      <div style={styles.messageText}>
+                        {conversation.last_message_text || "—"}
+                      </div>
                     </div>
+                  </td>
+
+                  <td style={styles.td}>
+                    <span style={styles.messageTypeBadge}>
+                      {getMessageTypeLabel(conversation.last_message_type)}
+                    </span>
                   </td>
 
                   <td style={styles.td}>
@@ -285,9 +313,9 @@ export default async function DashboardPage() {
 
               {conversations.length === 0 && (
                 <tr>
-                  <td style={styles.emptyState} colSpan={8}>
+                  <td style={styles.emptyState} colSpan={9}>
                     Todavía no hay conversaciones o hubo un error leyendo
-                    Supabase. Revisa Vercel Logs si esperabas ver datos.
+                    Supabase.
                   </td>
                 </tr>
               )}
@@ -312,6 +340,16 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "flex-end",
     marginBottom: "28px",
+  },
+  logoutLink: {
+    color: "#171717",
+    textDecoration: "none",
+    fontSize: "14px",
+    fontWeight: 700,
+    border: "1px solid #d8cec2",
+    borderRadius: "10px",
+    padding: "10px 14px",
+    background: "#ffffff",
   },
   eyebrow: {
     margin: "0 0 8px",
@@ -450,10 +488,29 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#e8e0ff",
     color: "#4b2ca3",
   },
+  messageCell: {
+    minWidth: "320px",
+    maxWidth: "420px",
+  },
+  audioLabel: {
+    marginBottom: "5px",
+    fontSize: "12px",
+    fontWeight: 800,
+    color: "#6842a8",
+  },
   messageText: {
-    maxWidth: "360px",
     overflow: "hidden",
     textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  messageTypeBadge: {
+    display: "inline-flex",
+    borderRadius: "999px",
+    padding: "5px 9px",
+    background: "#f1ede8",
+    color: "#5f554b",
+    fontSize: "12px",
+    fontWeight: 700,
     whiteSpace: "nowrap",
   },
   emptyState: {

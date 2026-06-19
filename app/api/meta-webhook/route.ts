@@ -194,13 +194,7 @@ async function transcribeAndSaveAudio(params: {
   audioUrl: string;
   direction: string;
 }) {
-  const {
-    messageId,
-    conversationId,
-    audioUrl,
-    direction,
-  } = params;
-
+  const { messageId, conversationId, audioUrl, direction } = params;
   const supabaseAdmin = getSupabaseAdmin();
 
   const { data: existingMessage, error: existingMessageError } =
@@ -261,19 +255,49 @@ async function transcribeAndSaveAudio(params: {
       );
     }
 
-    const { error: conversationUpdateError } = await supabaseAdmin
-      .from("conversations")
-      .update({
-        last_message_text: transcription,
-        last_message_direction: direction,
-        updated_at: transcribedAt,
-      })
-      .eq("conversation_id", conversationId);
+    const { data: currentConversation, error: conversationFetchError } =
+      await supabaseAdmin
+        .from("conversations")
+        .select("last_message_id")
+        .eq("conversation_id", conversationId)
+        .maybeSingle();
 
-    if (conversationUpdateError) {
+    if (conversationFetchError) {
       console.error(
-        "Supabase conversation transcription update error:",
-        conversationUpdateError
+        "Supabase current conversation fetch error:",
+        conversationFetchError
+      );
+    }
+
+    const isStillLatestMessage =
+      currentConversation?.last_message_id === messageId;
+
+    if (isStillLatestMessage) {
+      const { error: conversationUpdateError } = await supabaseAdmin
+        .from("conversations")
+        .update({
+          last_message_text: transcription,
+          last_message_direction: direction,
+          last_message_type: "audio",
+          updated_at: transcribedAt,
+        })
+        .eq("conversation_id", conversationId)
+        .eq("last_message_id", messageId);
+
+      if (conversationUpdateError) {
+        console.error(
+          "Supabase conversation transcription update error:",
+          conversationUpdateError
+        );
+      }
+    } else {
+      console.log(
+        "Transcription saved, but conversation has a newer message:",
+        {
+          messageId,
+          conversationId,
+          currentLastMessageId: currentConversation?.last_message_id,
+        }
       );
     }
 
@@ -347,12 +371,14 @@ async function upsertMessage(params: {
       .maybeSingle();
 
   if (existingMessageError) {
-    console.error("Supabase existing message fetch error:", existingMessageError);
+    console.error(
+      "Supabase existing message fetch error:",
+      existingMessageError
+    );
   }
 
   const initialTranscriptionStatus =
-    isAudio &&
-    existingMessage?.transcription_status !== "completed"
+    isAudio && existingMessage?.transcription_status !== "completed"
       ? "pending"
       : existingMessage?.transcription_status || null;
 
@@ -392,10 +418,12 @@ async function upsertMessage(params: {
           status: "pending",
           needs_response: true,
           last_user_message_at: sentAt,
+          last_message_id: message.mid,
+          last_message_type: messageType,
           last_message_text:
             existingMessage?.transcription || visibleMessageText,
           last_message_direction: direction,
-          updated_at: new Date().toISOString(),
+          updated_at: sentAt || new Date().toISOString(),
         }
       : {
           conversation_id: parts.conversationId,
@@ -404,12 +432,14 @@ async function upsertMessage(params: {
           status: "answered",
           needs_response: false,
           last_business_reply_at: sentAt,
+          last_message_id: message.mid,
+          last_message_type: messageType,
           last_message_text:
             existingMessage?.transcription || visibleMessageText,
           last_message_direction: direction,
           last_human_reply_at: sentAt,
           last_outbound_type: "human",
-          updated_at: new Date().toISOString(),
+          updated_at: sentAt || new Date().toISOString(),
         };
 
   const { error: conversationError } = await supabaseAdmin
