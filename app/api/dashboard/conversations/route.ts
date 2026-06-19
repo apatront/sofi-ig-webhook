@@ -26,6 +26,10 @@ export async function GET() {
         personal_marked_at,
         personal_marked_by,
 
+        is_client,
+        client_marked_at,
+        client_marked_by,
+
         status,
         needs_response,
         queue,
