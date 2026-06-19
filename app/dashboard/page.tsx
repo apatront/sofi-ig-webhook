@@ -9,6 +9,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  Flame,
   Heart,
   Headphones,
   Inbox,
@@ -17,6 +18,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Star,
   UserCheck,
   UserRound,
   UsersRound,
@@ -41,6 +43,10 @@ type Conversation = {
   excluded_from_ai: boolean | null;
   personal_marked_at: string | null;
   personal_marked_by: string | null;
+
+  is_client: boolean | null;
+  client_marked_at: string | null;
+  client_marked_by: string | null;
 
   status: string | null;
   needs_response: boolean | null;
@@ -314,7 +320,7 @@ function getOperationalScore(conversation: Conversation) {
 
 function getStatusLabel(conversation: Conversation) {
   if (isPersonalConversation(conversation)) {
-    return "Vida personal";
+    return "Personal";
   }
 
   const resolutionStatus = normalizeText(conversation.resolution_status);
@@ -354,7 +360,7 @@ function humanize(value: string | null) {
 
 function getQueueMeta(tone: QueueTone) {
   if (tone === "urgent") {
-    return { label: "Urgente", icon: <AlertTriangle size={14} /> };
+    return { label: "Hot lead", icon: <Flame size={14} /> };
   }
 
   if (tone === "sofi") {
@@ -395,6 +401,40 @@ function MetricCard({
         <small>{description}</small>
       </div>
     </article>
+  );
+}
+
+
+function ExpandableText({
+  text,
+  limit,
+}: {
+  text: string;
+  limit: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const cleanText = text.trim();
+  const canExpand = cleanText.length > limit;
+
+  const visibleText =
+    canExpand && !expanded
+      ? `${cleanText.slice(0, limit).trimEnd()}…`
+      : cleanText;
+
+  return (
+    <div className="expandable-text">
+      <p>{visibleText}</p>
+
+      {canExpand && (
+        <button
+          type="button"
+          className="expand-button"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? "Ver menos" : "Ver más"}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -443,17 +483,24 @@ function ConversationCard({
   tone,
   assigningConversationId,
   personalConversationId,
+  clientConversationId,
   onAssign,
   onTogglePersonal,
+  onToggleClient,
 }: {
   conversation: Conversation;
   tone: QueueTone;
   assigningConversationId: string | null;
   personalConversationId: string | null;
+  clientConversationId: string | null;
   onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
   onTogglePersonal: (
     conversationId: string,
     isPersonal: boolean
+  ) => Promise<void>;
+  onToggleClient: (
+    conversationId: string,
+    isClient: boolean
   ) => Promise<void>;
 }) {
   const waiting = minutesWaiting(conversation);
@@ -462,6 +509,9 @@ function ConversationCard({
   const isAssigning = assigningConversationId === conversation.conversation_id;
   const isUpdatingPersonal =
     personalConversationId === conversation.conversation_id;
+  const isUpdatingClient =
+    clientConversationId === conversation.conversation_id;
+  const isClient = conversation.is_client === true;
 
   const instagramUrl = conversation.external_username
     ? `https://www.instagram.com/${conversation.external_username}/`
@@ -472,7 +522,11 @@ function ConversationCard({
     : [];
 
   return (
-    <article className={`conversation-card conversation-${tone}`}>
+    <article
+      className={`conversation-card conversation-${tone} ${
+        isClient ? "client-card" : ""
+      }`}
+    >
       <div className="card-header">
         <div className="profile-area">
           <div className="instagram-avatar-ring">
@@ -492,6 +546,14 @@ function ConversationCard({
           <div className="profile-copy">
             <div className="username-row">
               <strong>{getDisplayName(conversation)}</strong>
+
+              {isClient && (
+                <Star
+                  size={15}
+                  className="client-star"
+                  fill="currentColor"
+                />
+              )}
 
               {conversation.is_verified_user && (
                 <ShieldCheck size={15} className="verified-icon" />
@@ -529,10 +591,6 @@ function ConversationCard({
               </span>
 
               <span className="compact-tag classification-tag">
-                {humanize(conversation.category)}
-              </span>
-
-              <span className="compact-tag classification-tag">
                 {humanize(conversation.intent)}
               </span>
             </>
@@ -544,6 +602,13 @@ function ConversationCard({
         <span className={`status-pill status-${getStatusClass(conversation)}`}>
           {getStatusLabel(conversation)}
         </span>
+
+        {isClient && (
+          <span className="client-pill">
+            <Star size={12} fill="currentColor" />
+            Clienta
+          </span>
+        )}
 
         {conversation.last_outbound_type === "automation" && !isPersonal && (
           <span className="automation-pill">
@@ -589,27 +654,36 @@ function ConversationCard({
           )}
         </div>
 
-        <p>
-          {conversation.last_message_text || "Sin contenido disponible."}
-        </p>
+        <ExpandableText
+          text={
+            conversation.last_message_text || "Sin contenido disponible."
+          }
+          limit={220}
+        />
       </div>
 
       {!isPersonal && (
         <div className="compact-summary">
           <div>
             <span>Resumen</span>
-            <p>
-              {conversation.summary ||
-                "Pendiente de análisis con inteligencia artificial."}
-            </p>
+            <ExpandableText
+              text={
+                conversation.summary ||
+                "Pendiente de análisis con inteligencia artificial."
+              }
+              limit={150}
+            />
           </div>
 
           <div>
             <span>Siguiente acción</span>
-            <p>
-              {conversation.next_action ||
-                "Revisar la conversación y definir el siguiente paso."}
-            </p>
+            <ExpandableText
+              text={
+                conversation.next_action ||
+                "Revisar la conversación y definir el siguiente paso."
+              }
+              limit={150}
+            />
           </div>
         </div>
       )}
@@ -622,7 +696,7 @@ function ConversationCard({
               className={`action-button ${
                 conversation.assigned_to === "sofi" ? "action-active" : ""
               }`}
-              disabled={isAssigning || isUpdatingPersonal}
+              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
               onClick={() => onAssign(conversation.conversation_id, "sofi")}
             >
               <UserRound size={14} />
@@ -634,7 +708,7 @@ function ConversationCard({
               className={`action-button ${
                 conversation.assigned_to === "admin" ? "action-active" : ""
               }`}
-              disabled={isAssigning || isUpdatingPersonal}
+              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
               onClick={() => onAssign(conversation.conversation_id, "admin")}
             >
               <Headphones size={14} />
@@ -645,10 +719,28 @@ function ConversationCard({
 
         <button
           type="button"
+          className={`action-button client-button ${
+            isClient ? "client-active" : ""
+          }`}
+          disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+          onClick={() =>
+            onToggleClient(conversation.conversation_id, !isClient)
+          }
+        >
+          <Star size={14} fill={isClient ? "currentColor" : "none"} />
+          {isUpdatingClient
+            ? "Guardando..."
+            : isClient
+              ? "Quitar clienta"
+              : "Clienta"}
+        </button>
+
+        <button
+          type="button"
           className={`action-button personal-button ${
             isPersonal ? "personal-active" : ""
           }`}
-          disabled={isAssigning || isUpdatingPersonal}
+          disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
           onClick={() =>
             onTogglePersonal(conversation.conversation_id, !isPersonal)
           }
@@ -658,7 +750,7 @@ function ConversationCard({
             ? "Guardando..."
             : isPersonal
               ? "Sacar de personal"
-              : "Vida personal"}
+              : "Personal"}
         </button>
 
         {instagramUrl ? (
@@ -713,8 +805,10 @@ function QueueSection({
   tone,
   assigningConversationId,
   personalConversationId,
+  clientConversationId,
   onAssign,
   onTogglePersonal,
+  onToggleClient,
 }: {
   title: string;
   description: string;
@@ -723,10 +817,15 @@ function QueueSection({
   tone: QueueTone;
   assigningConversationId: string | null;
   personalConversationId: string | null;
+  clientConversationId: string | null;
   onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
   onTogglePersonal: (
     conversationId: string,
     isPersonal: boolean
+  ) => Promise<void>;
+  onToggleClient: (
+    conversationId: string,
+    isClient: boolean
   ) => Promise<void>;
 }) {
   return (
@@ -755,8 +854,10 @@ function QueueSection({
               tone={tone}
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={onAssign}
               onTogglePersonal={onTogglePersonal}
+              onToggleClient={onToggleClient}
             />
           ))}
         </div>
@@ -780,6 +881,9 @@ export default function DashboardPage() {
     string | null
   >(null);
   const [personalConversationId, setPersonalConversationId] = useState<
+    string | null
+  >(null);
+  const [clientConversationId, setClientConversationId] = useState<
     string | null
   >(null);
 
@@ -909,7 +1013,7 @@ export default function DashboardPage() {
         throw new Error(
           body.details ||
             body.error ||
-            "No se pudo actualizar Vida personal."
+            "No se pudo actualizar Personal."
         );
       }
 
@@ -922,10 +1026,65 @@ export default function DashboardPage() {
       setActionError(
         error instanceof Error
           ? error.message
-          : "No se pudo actualizar Vida personal."
+          : "No se pudo actualizar Personal."
       );
     } finally {
       setPersonalConversationId(null);
+    }
+  }
+
+
+  async function toggleClientConversation(
+    conversationId: string,
+    isClient: boolean
+  ) {
+    try {
+      setActionError("");
+      setClientConversationId(conversationId);
+
+      const response = await fetch(
+        "/api/dashboard/conversations/client",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            is_client: isClient,
+          }),
+        }
+      );
+
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          body.details ||
+            body.error ||
+            "No se pudo actualizar el estado de Clienta."
+        );
+      }
+
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.conversation_id === conversationId
+            ? {
+                ...conversation,
+                is_client: body.conversation.is_client,
+                client_marked_at: body.conversation.client_marked_at,
+                client_marked_by: body.conversation.client_marked_by,
+                updated_at: body.conversation.updated_at,
+              }
+            : conversation
+        )
+      );
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo actualizar el estado de Clienta."
+      );
+    } finally {
+      setClientConversationId(null);
     }
   }
 
@@ -1082,10 +1241,10 @@ export default function DashboardPage() {
 
       <section className="metrics-grid">
         <MetricCard
-          label="Urgentes"
+          label="Hot leads"
           value={urgent.length}
-          description="Requieren acción inmediata"
-          icon={<AlertTriangle size={19} />}
+          description="Alta intención y prioridad"
+          icon={<Flame size={19} />}
           tone="danger"
         />
 
@@ -1122,7 +1281,7 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          label="Vida personal"
+          label="Personal"
           value={personal.length}
           description="Fuera de IA y seguimiento"
           icon={<Heart size={19} />}
@@ -1152,8 +1311,8 @@ export default function DashboardPage() {
             className={activeTab === "urgent" ? "active urgent-tab" : ""}
             onClick={() => setActiveTab("urgent")}
           >
-            <AlertTriangle size={15} />
-            Urgentes
+            <Flame size={15} />
+            Hot leads
           </button>
 
           <button
@@ -1177,7 +1336,7 @@ export default function DashboardPage() {
             onClick={() => setActiveTab("personal")}
           >
             <Heart size={15} />
-            Vida personal
+            Personal
           </button>
 
           <button
@@ -1239,15 +1398,17 @@ export default function DashboardPage() {
         <div className="queues-container">
           {(activeTab === "overview" || activeTab === "urgent") && (
             <QueueSection
-              title="Urgentes"
-              description="Riesgo comercial, operativo o de servicio."
+              title="Hot leads"
+              description="Leads con alta intención, urgencia o potencial de cierre."
               conversations={visibleUrgent}
-              icon={<AlertTriangle size={20} />}
+              icon={<Flame size={20} />}
               tone="urgent"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
 
@@ -1260,8 +1421,10 @@ export default function DashboardPage() {
               tone="sofi"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
 
@@ -1274,8 +1437,10 @@ export default function DashboardPage() {
               tone="admin"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
 
@@ -1288,22 +1453,26 @@ export default function DashboardPage() {
               tone="neutral"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
 
           {activeTab === "personal" && (
             <QueueSection
-              title="Vida personal"
+              title="Personal"
               description="Amigos y contactos personales excluidos del análisis de IA."
               conversations={personal}
               icon={<Heart size={20} />}
               tone="personal"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
 
@@ -1316,8 +1485,10 @@ export default function DashboardPage() {
               tone="neutral"
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
             />
           )}
         </div>
@@ -1733,6 +1904,17 @@ export default function DashboardPage() {
           border-left: 4px solid #a1a1aa;
         }
 
+        .client-card {
+          border-color: #f5c451;
+          background: linear-gradient(180deg, #fffdf2 0%, #ffffff 46%);
+          box-shadow: 0 8px 28px rgba(180, 120, 0, 0.08);
+        }
+
+        .client-star {
+          flex: 0 0 auto;
+          color: #d79b00;
+        }
+
         .card-header {
           display: flex;
           align-items: flex-start;
@@ -1972,6 +2154,18 @@ export default function DashboardPage() {
           background: #f2f4f7;
         }
 
+        .client-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 5px 7px;
+          border-radius: 999px;
+          color: #8a5a00;
+          background: #fff1b8;
+          font-size: 9px;
+          font-weight: 850;
+        }
+
         .resolution-alert {
           display: flex;
           align-items: flex-start;
@@ -2027,15 +2221,12 @@ export default function DashboardPage() {
           text-transform: uppercase;
         }
 
-        .message-panel p {
-          display: -webkit-box;
-          overflow: hidden;
+        .message-panel .expandable-text p {
           margin: 0;
           color: #27272a;
           font-size: 11px;
           line-height: 1.45;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 3;
+          white-space: pre-wrap;
         }
 
         .compact-summary {
@@ -2064,14 +2255,30 @@ export default function DashboardPage() {
           text-transform: uppercase;
         }
 
-        .compact-summary p {
-          display: -webkit-box;
-          overflow: hidden;
+        .compact-summary .expandable-text p {
           margin: 0;
           font-size: 10px;
           line-height: 1.4;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
+          white-space: pre-wrap;
+        }
+
+        .expandable-text {
+          min-width: 0;
+        }
+
+        .expand-button {
+          margin-top: 5px;
+          padding: 0;
+          border: 0;
+          color: #6941c6;
+          background: transparent;
+          font-size: 9px;
+          font-weight: 850;
+          cursor: pointer;
+        }
+
+        .expand-button:hover {
+          text-decoration: underline;
         }
 
         .card-actions {
@@ -2111,6 +2318,16 @@ export default function DashboardPage() {
           border-color: #c4b5fd;
           color: #6941c6;
           background: #f5f3ff;
+        }
+
+        .client-button {
+          color: #8a5a00;
+        }
+
+        .client-button.client-active {
+          border-color: #f4c152;
+          color: #7a4b00;
+          background: #fff7d6;
         }
 
         .personal-button {
