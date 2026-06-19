@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const supabaseAdmin = getSupabaseAdmin();
@@ -18,22 +20,63 @@ export async function GET() {
         is_user_follow_business,
         is_business_follow_user,
         is_verified_user,
+
         status,
         needs_response,
-        last_message_text,
-        last_message_direction,
-        last_user_message_at,
-        last_business_reply_at,
-        updated_at,
+        queue,
         category,
         priority,
+        intent,
+        sentiment,
+        objection,
+        product,
+
+        needs_sofi,
+        needs_admin,
+        assigned_to,
+
+        lead_score,
+        urgency_score,
+        sort_score,
+
         summary,
         next_action,
-        assigned_to
+        ai_reasoning,
+        last_ai_analysis_at,
+
+        conversation_stage,
+        conversion_status,
+        estimated_value,
+        customer_status,
+
+        last_message_id,
+        last_message_type,
+        last_message_text,
+        last_message_direction,
+
+        last_user_message_at,
+        last_business_reply_at,
+        last_outbound_type,
+        last_automation_reply_at,
+        last_human_reply_at,
+
+        first_response_at,
+        follow_up_at,
+        resolved_at,
+        sla_due_at,
+
+        created_at,
+        updated_at
       `
       )
-      .order("updated_at", { ascending: false })
-      .limit(100);
+      .order("sort_score", {
+        ascending: false,
+        nullsFirst: false,
+      })
+      .order("updated_at", {
+        ascending: false,
+      })
+      .limit(250);
 
     if (error) {
       console.error("Dashboard conversations fetch error:", error);
