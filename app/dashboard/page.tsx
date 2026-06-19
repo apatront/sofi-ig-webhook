@@ -918,7 +918,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <style jsx>{`
+      <style jsx global>{`
         * {
           box-sizing: border-box;
         }
