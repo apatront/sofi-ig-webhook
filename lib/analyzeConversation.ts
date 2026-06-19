@@ -20,10 +20,18 @@ type ConversationRow = {
   is_user_follow_business: boolean | null;
   is_business_follow_user: boolean | null;
   is_verified_user: boolean | null;
+
   status: string | null;
   needs_response: boolean | null;
   last_message_id: string | null;
   last_user_message_at: string | null;
+
+  assignment_locked: boolean | null;
+  assignment_source: string | null;
+  assigned_to: string | null;
+  queue: string | null;
+  needs_sofi: boolean | null;
+  needs_admin: boolean | null;
 };
 
 export type ConversationAnalysisResult =
@@ -38,18 +46,31 @@ export type ConversationAnalysisResult =
         priority: string;
         intent: string;
         sentiment: string;
+
         product: string;
         objection: string;
+
         needs_sofi: boolean;
         needs_admin: boolean;
         assigned_to: string;
+
         lead_score: number;
         urgency_score: number;
+
         summary: string;
         next_action: string;
         ai_reasoning: string;
+
         conversation_stage: string;
         customer_status: string;
+
+        resolution_status: string;
+        open_requests: string[];
+        unresolved_items: string[];
+        resolution_reason: string;
+        resolution_alert: string;
+        needs_resolution_review: boolean;
+
         sort_score: number;
       };
     }
@@ -122,6 +143,7 @@ function calculateSortScore(params: {
   status: string | null;
   needsResponse: boolean | null;
   lastUserMessageAt: string | null;
+  resolutionStatus: string;
 }) {
   let score = 0;
 
@@ -148,6 +170,18 @@ function calculateSortScore(params: {
     score += 50;
   }
 
+  if (params.resolutionStatus === "answered_pending_resolution") {
+    score += 60;
+  }
+
+  if (params.resolutionStatus === "needs_follow_up") {
+    score += 80;
+  }
+
+  if (params.resolutionStatus === "resolved") {
+    score -= 500;
+  }
+
   const waitingMinutes = minutesSince(params.lastUserMessageAt);
 
   if (waitingMinutes >= 180) score += 30;
@@ -156,7 +190,6 @@ function calculateSortScore(params: {
   score += params.leadScore;
   score += params.urgencyScore;
 
-  if (params.status === "answered") score -= 200;
   if (params.status === "closed") score -= 500;
 
   return score;
@@ -182,7 +215,13 @@ export async function analyzeConversationById(
           status,
           needs_response,
           last_message_id,
-          last_user_message_at
+          last_user_message_at,
+          assignment_locked,
+          assignment_source,
+          assigned_to,
+          queue,
+          needs_sofi,
+          needs_admin
         `
         )
         .eq("conversation_id", conversationId)
@@ -295,54 +334,93 @@ export async function analyzeConversationById(
       isVerified: typedConversation.is_verified_user,
     });
 
+    const assignmentIsLocked =
+      typedConversation.assignment_locked === true;
+
+    const effectiveQueue = assignmentIsLocked
+      ? typedConversation.queue || classification.queue
+      : classification.queue;
+
+    const effectiveAssignedTo = assignmentIsLocked
+      ? typedConversation.assigned_to || classification.assigned_to
+      : classification.assigned_to;
+
+    const effectiveNeedsSofi = assignmentIsLocked
+      ? Boolean(typedConversation.needs_sofi)
+      : classification.needs_sofi;
+
+    const effectiveNeedsAdmin = assignmentIsLocked
+      ? Boolean(typedConversation.needs_admin)
+      : classification.needs_admin;
+
     const sortScore = calculateSortScore({
-      queue: classification.queue,
+      queue: effectiveQueue,
       category: classification.category,
       priority: classification.priority,
       intent: classification.intent,
-      needsSofi: classification.needs_sofi,
-      needsAdmin: classification.needs_admin,
+      needsSofi: effectiveNeedsSofi,
+      needsAdmin: effectiveNeedsAdmin,
       leadScore: classification.lead_score,
       urgencyScore: classification.urgency_score,
       status: typedConversation.status,
       needsResponse: typedConversation.needs_response,
       lastUserMessageAt: typedConversation.last_user_message_at,
+      resolutionStatus: classification.resolution_status,
     });
 
     const analyzedAt = new Date().toISOString();
 
+    const updatePayload = {
+      queue: effectiveQueue,
+      category: classification.category,
+      priority: classification.priority,
+      intent: classification.intent,
+      sentiment: classification.sentiment,
+
+      product: classification.product || null,
+      objection: classification.objection || null,
+
+      needs_sofi: effectiveNeedsSofi,
+      needs_admin: effectiveNeedsAdmin,
+      assigned_to: effectiveAssignedTo,
+
+      lead_score: classification.lead_score,
+      urgency_score: classification.urgency_score,
+      sort_score: sortScore,
+
+      summary: classification.summary,
+      next_action: classification.next_action,
+      ai_reasoning: classification.ai_reasoning,
+
+      conversation_stage: classification.conversation_stage,
+      customer_status: classification.customer_status,
+
+      resolution_status: classification.resolution_status,
+      needs_resolution_review:
+        classification.needs_resolution_review,
+      open_requests: classification.open_requests,
+      unresolved_items: classification.unresolved_items,
+      resolution_reason: classification.resolution_reason || null,
+      resolution_alert: classification.resolution_alert || null,
+      resolution_reviewed_at: analyzedAt,
+      last_resolution_review_message_id:
+        typedConversation.last_message_id,
+
+      last_ai_analysis_at: analyzedAt,
+      ai_analysis_status: "completed",
+      ai_analyzed_message_id: typedConversation.last_message_id,
+      ai_analysis_error: null,
+
+      assignment_source: assignmentIsLocked
+        ? typedConversation.assignment_source || "manual"
+        : "ai",
+
+      updated_at: analyzedAt,
+    };
+
     const { error: updateError } = await supabaseAdmin
       .from("conversations")
-      .update({
-        queue: classification.queue,
-        category: classification.category,
-        priority: classification.priority,
-        intent: classification.intent,
-        sentiment: classification.sentiment,
-        product: classification.product || null,
-        objection: classification.objection || null,
-
-        needs_sofi: classification.needs_sofi,
-        needs_admin: classification.needs_admin,
-        assigned_to: classification.assigned_to,
-
-        lead_score: classification.lead_score,
-        urgency_score: classification.urgency_score,
-        sort_score: sortScore,
-
-        summary: classification.summary,
-        next_action: classification.next_action,
-        ai_reasoning: classification.ai_reasoning,
-
-        conversation_stage: classification.conversation_stage,
-        customer_status: classification.customer_status,
-
-        last_ai_analysis_at: analyzedAt,
-        ai_analysis_status: "completed",
-        ai_analyzed_message_id: typedConversation.last_message_id,
-        ai_analysis_error: null,
-        updated_at: analyzedAt,
-      })
+      .update(updatePayload)
       .eq("conversation_id", conversationId);
 
     if (updateError) {
@@ -358,6 +436,10 @@ export async function analyzeConversationById(
       analyzed_messages: orderedMessages.length,
       classification: {
         ...classification,
+        queue: effectiveQueue,
+        assigned_to: effectiveAssignedTo,
+        needs_sofi: effectiveNeedsSofi,
+        needs_admin: effectiveNeedsAdmin,
         sort_score: sortScore,
       },
     };
