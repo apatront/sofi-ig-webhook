@@ -32,6 +32,9 @@ type ConversationRow = {
   queue: string | null;
   needs_sofi: boolean | null;
   needs_admin: boolean | null;
+
+  contact_type: string | null;
+  excluded_from_ai: boolean | null;
 };
 
 export type ConversationAnalysisResult =
@@ -120,7 +123,9 @@ function buildTranscript(messages: MessageRow[]) {
 }
 
 function minutesSince(dateString: string | null) {
-  if (!dateString) return 0;
+  if (!dateString) {
+    return 0;
+  }
 
   const timestamp = new Date(dateString).getTime();
 
@@ -190,7 +195,9 @@ function calculateSortScore(params: {
   score += params.leadScore;
   score += params.urgencyScore;
 
-  if (params.status === "closed") score -= 500;
+  if (params.status === "closed") {
+    score -= 500;
+  }
 
   return score;
 }
@@ -212,16 +219,21 @@ export async function analyzeConversationById(
           is_user_follow_business,
           is_business_follow_user,
           is_verified_user,
+
           status,
           needs_response,
           last_message_id,
           last_user_message_at,
+
           assignment_locked,
           assignment_source,
           assigned_to,
           queue,
           needs_sofi,
-          needs_admin
+          needs_admin,
+
+          contact_type,
+          excluded_from_ai
         `
         )
         .eq("conversation_id", conversationId)
@@ -238,6 +250,38 @@ export async function analyzeConversationById(
     }
 
     const typedConversation = conversation as ConversationRow;
+
+    const isPersonal =
+      typedConversation.contact_type === "personal" ||
+      typedConversation.excluded_from_ai === true;
+
+    if (isPersonal) {
+      const { error: excludedUpdateError } = await supabaseAdmin
+        .from("conversations")
+        .update({
+          contact_type: "personal",
+          excluded_from_ai: true,
+          category: "personal",
+          queue: "personal",
+          ai_analysis_status: "excluded",
+          ai_analysis_error: null,
+          needs_resolution_review: false,
+        })
+        .eq("conversation_id", conversationId);
+
+      if (excludedUpdateError) {
+        throw new Error(
+          `Failed to preserve personal exclusion: ${excludedUpdateError.message}`
+        );
+      }
+
+      return {
+        ok: false,
+        deferred: true,
+        conversation_id: conversationId,
+        reason: "Conversation is marked as personal and excluded from AI",
+      };
+    }
 
     if (!typedConversation.last_message_id) {
       return {
@@ -286,7 +330,9 @@ export async function analyzeConversationById(
         ai_analysis_status: "processing",
         ai_analysis_error: null,
       })
-      .eq("conversation_id", conversationId);
+      .eq("conversation_id", conversationId)
+      .eq("excluded_from_ai", false)
+      .neq("contact_type", "personal");
 
     if (processingError) {
       throw new Error(
@@ -334,23 +380,73 @@ export async function analyzeConversationById(
       isVerified: typedConversation.is_verified_user,
     });
 
+    const { data: latestConversationState, error: latestStateError } =
+      await supabaseAdmin
+        .from("conversations")
+        .select(
+          `
+          contact_type,
+          excluded_from_ai,
+          assignment_locked,
+          assignment_source,
+          assigned_to,
+          queue,
+          needs_sofi,
+          needs_admin
+        `
+        )
+        .eq("conversation_id", conversationId)
+        .maybeSingle();
+
+    if (latestStateError) {
+      throw new Error(
+        `Failed to verify conversation state: ${latestStateError.message}`
+      );
+    }
+
+    if (
+      latestConversationState?.contact_type === "personal" ||
+      latestConversationState?.excluded_from_ai === true
+    ) {
+      await supabaseAdmin
+        .from("conversations")
+        .update({
+          contact_type: "personal",
+          excluded_from_ai: true,
+          category: "personal",
+          queue: "personal",
+          ai_analysis_status: "excluded",
+          ai_analysis_error: null,
+          needs_resolution_review: false,
+        })
+        .eq("conversation_id", conversationId);
+
+      return {
+        ok: false,
+        deferred: true,
+        conversation_id: conversationId,
+        reason:
+          "Conversation was marked as personal while analysis was running",
+      };
+    }
+
     const assignmentIsLocked =
-      typedConversation.assignment_locked === true;
+      latestConversationState?.assignment_locked === true;
 
     const effectiveQueue = assignmentIsLocked
-      ? typedConversation.queue || classification.queue
+      ? latestConversationState?.queue || classification.queue
       : classification.queue;
 
     const effectiveAssignedTo = assignmentIsLocked
-      ? typedConversation.assigned_to || classification.assigned_to
+      ? latestConversationState?.assigned_to || classification.assigned_to
       : classification.assigned_to;
 
     const effectiveNeedsSofi = assignmentIsLocked
-      ? Boolean(typedConversation.needs_sofi)
+      ? Boolean(latestConversationState?.needs_sofi)
       : classification.needs_sofi;
 
     const effectiveNeedsAdmin = assignmentIsLocked
-      ? Boolean(typedConversation.needs_admin)
+      ? Boolean(latestConversationState?.needs_admin)
       : classification.needs_admin;
 
     const sortScore = calculateSortScore({
@@ -412,7 +508,7 @@ export async function analyzeConversationById(
       ai_analysis_error: null,
 
       assignment_source: assignmentIsLocked
-        ? typedConversation.assignment_source || "manual"
+        ? latestConversationState?.assignment_source || "manual"
         : "ai",
 
       updated_at: analyzedAt,
@@ -421,7 +517,9 @@ export async function analyzeConversationById(
     const { error: updateError } = await supabaseAdmin
       .from("conversations")
       .update(updatePayload)
-      .eq("conversation_id", conversationId);
+      .eq("conversation_id", conversationId)
+      .eq("excluded_from_ai", false)
+      .neq("contact_type", "personal");
 
     if (updateError) {
       throw new Error(
@@ -447,11 +545,21 @@ export async function analyzeConversationById(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown analysis error";
 
+    const { data: currentConversation } = await supabaseAdmin
+      .from("conversations")
+      .select("contact_type, excluded_from_ai")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+
+    const isPersonal =
+      currentConversation?.contact_type === "personal" ||
+      currentConversation?.excluded_from_ai === true;
+
     await supabaseAdmin
       .from("conversations")
       .update({
-        ai_analysis_status: "failed",
-        ai_analysis_error: errorMessage,
+        ai_analysis_status: isPersonal ? "excluded" : "failed",
+        ai_analysis_error: isPersonal ? null : errorMessage,
       })
       .eq("conversation_id", conversationId);
 

@@ -21,6 +21,11 @@ export async function GET() {
         is_business_follow_user,
         is_verified_user,
 
+        contact_type,
+        excluded_from_ai,
+        personal_marked_at,
+        personal_marked_by,
+
         status,
         needs_response,
         queue,

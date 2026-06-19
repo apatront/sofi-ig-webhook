@@ -38,6 +38,8 @@ async function runPendingAnalysis(req: NextRequest) {
       .from("conversations")
       .select("conversation_id, updated_at")
       .eq("ai_analysis_status", "pending")
+      .eq("excluded_from_ai", false)
+      .neq("contact_type", "personal")
       .not("last_message_id", "is", null)
       .order("updated_at", { ascending: true })
       .limit(limit);
