@@ -20,6 +20,8 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Trash2,
+  RotateCcw,
   UserCheck,
   UserRound,
   UsersRound,
@@ -48,6 +50,11 @@ type Conversation = {
   is_client: boolean | null;
   client_marked_at: string | null;
   client_marked_by: string | null;
+
+  is_discarded: boolean | null;
+  discarded_at: string | null;
+  discard_expires_at: string | null;
+  discarded_by: string | null;
 
   status: string | null;
   needs_response: boolean | null;
@@ -117,9 +124,10 @@ type DashboardTab =
   | "sofi"
   | "admin"
   | "personal"
-  | "resolved";
+  | "resolved"
+  | "discarded";
 
-type QueueTone = "urgent" | "sofi" | "admin" | "personal" | "neutral";
+type QueueTone = "urgent" | "sofi" | "admin" | "personal" | "discarded" | "neutral";
 type Assignee = "sofi" | "admin";
 
 type ConversationMessage = {
@@ -151,17 +159,54 @@ function formatDate(dateString: string | null) {
   }).format(date);
 }
 
+function isDiscardedConversation(conversation: Conversation) {
+  return (
+    conversation.is_discarded === true ||
+    normalizeText(conversation.status) === "discarded" ||
+    normalizeText(conversation.category) === "discarded" ||
+    normalizeText(conversation.queue) === "discarded"
+  );
+}
+
+function isVisibleDiscardedConversation(conversation: Conversation) {
+  if (!isDiscardedConversation(conversation)) {
+    return false;
+  }
+
+  const expiresAt =
+    conversation.discard_expires_at ||
+    (conversation.discarded_at
+      ? new Date(
+          new Date(conversation.discarded_at).getTime() + 24 * 60 * 60 * 1000
+        ).toISOString()
+      : null);
+
+  if (!expiresAt) {
+    return false;
+  }
+
+  const expiresTimestamp = new Date(expiresAt).getTime();
+
+  if (Number.isNaN(expiresTimestamp)) {
+    return false;
+  }
+
+  return expiresTimestamp > Date.now();
+}
+
 function isPersonalConversation(conversation: Conversation) {
   return (
     normalizeText(conversation.contact_type) === "personal" ||
-    conversation.excluded_from_ai === true ||
     normalizeText(conversation.category) === "personal" ||
     normalizeText(conversation.queue) === "personal"
   );
 }
 
 function isResolvedConversation(conversation: Conversation) {
-  if (isPersonalConversation(conversation)) {
+  if (
+    isPersonalConversation(conversation) ||
+    isDiscardedConversation(conversation)
+  ) {
     return false;
   }
 
@@ -174,6 +219,7 @@ function isResolvedConversation(conversation: Conversation) {
 function isActiveConversation(conversation: Conversation) {
   if (
     isPersonalConversation(conversation) ||
+    isDiscardedConversation(conversation) ||
     isResolvedConversation(conversation)
   ) {
     return false;
@@ -241,6 +287,10 @@ function getDisplayName(conversation: Conversation) {
 }
 
 function getQueue(conversation: Conversation) {
+  if (isDiscardedConversation(conversation)) {
+    return "discarded";
+  }
+
   if (isPersonalConversation(conversation)) {
     return "personal";
   }
@@ -384,6 +434,10 @@ function getQueueMeta(tone: QueueTone) {
 
   if (tone === "personal") {
     return { label: "Personal", icon: <Heart size={14} /> };
+  }
+
+  if (tone === "discarded") {
+    return { label: "Descartada", icon: <Trash2 size={14} /> };
   }
 
   return { label: "Sin asignar", icon: <MessageCircle size={14} /> };
@@ -685,15 +739,18 @@ function ConversationCard({
   assigningConversationId,
   personalConversationId,
   clientConversationId,
+  discardedConversationId,
   onAssign,
   onTogglePersonal,
   onToggleClient,
+  onToggleDiscarded,
 }: {
   conversation: Conversation;
   tone: QueueTone;
   assigningConversationId: string | null;
   personalConversationId: string | null;
   clientConversationId: string | null;
+  discardedConversationId: string | null;
   onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
   onTogglePersonal: (
     conversationId: string,
@@ -702,6 +759,10 @@ function ConversationCard({
   onToggleClient: (
     conversationId: string,
     isClient: boolean
+  ) => Promise<void>;
+  onToggleDiscarded: (
+    conversationId: string,
+    isDiscarded: boolean
   ) => Promise<void>;
 }) {
   const waiting = minutesWaiting(conversation);
@@ -712,6 +773,9 @@ function ConversationCard({
   const isUpdatingClient =
     clientConversationId === conversation.conversation_id;
   const isClient = conversation.is_client === true;
+  const isDiscarded = isDiscardedConversation(conversation);
+  const isUpdatingDiscarded =
+    discardedConversationId === conversation.conversation_id;
 
   const instagramUrl = conversation.external_username
     ? `https://www.instagram.com/${conversation.external_username}/`
@@ -872,7 +936,7 @@ function ConversationCard({
               className={`action-button ${
                 conversation.assigned_to === "sofi" ? "action-active" : ""
               }`}
-              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient || isUpdatingDiscarded}
               onClick={() => onAssign(conversation.conversation_id, "sofi")}
             >
               <UserRound size={14} />
@@ -884,7 +948,7 @@ function ConversationCard({
               className={`action-button ${
                 conversation.assigned_to === "admin" ? "action-active" : ""
               }`}
-              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+              disabled={isAssigning || isUpdatingPersonal || isUpdatingClient || isUpdatingDiscarded}
               onClick={() => onAssign(conversation.conversation_id, "admin")}
             >
               <Headphones size={14} />
@@ -899,7 +963,7 @@ function ConversationCard({
             className={`action-button client-button ${
               isClient ? "client-active" : ""
             }`}
-            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient || isUpdatingDiscarded}
             onClick={() =>
               onToggleClient(conversation.conversation_id, !isClient)
             }
@@ -917,7 +981,7 @@ function ConversationCard({
             className={`action-button personal-button ${
               isPersonal ? "personal-active" : ""
             }`}
-            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient}
+            disabled={isAssigning || isUpdatingPersonal || isUpdatingClient || isUpdatingDiscarded}
             onClick={() =>
               onTogglePersonal(conversation.conversation_id, !isPersonal)
             }
@@ -930,6 +994,32 @@ function ConversationCard({
                 : "Personal"}
           </button>
         </div>
+
+        <button
+          type="button"
+          className={`action-button discard-button ${
+            isDiscarded ? "discard-active" : ""
+          }`}
+          disabled={
+            isAssigning ||
+            isUpdatingPersonal ||
+            isUpdatingClient ||
+            isUpdatingDiscarded
+          }
+          onClick={() =>
+            onToggleDiscarded(
+              conversation.conversation_id,
+              !isDiscarded
+            )
+          }
+        >
+          {isDiscarded ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+          {isUpdatingDiscarded
+            ? "Guardando..."
+            : isDiscarded
+              ? "Restaurar"
+              : "Descartar"}
+        </button>
 
         {instagramUrl ? (
           <a
@@ -957,12 +1047,14 @@ function ConversationCard({
           <Clock3 size={14} />
 
           <strong>
-            {isPersonal
-              ? "Fuera del flujo de IA"
-              : formatWaitingTime(waiting)}
+            {isDiscarded
+              ? "Fuera del inbox activo"
+              : isPersonal
+                ? "Fuera del flujo de IA"
+                : formatWaitingTime(waiting)}
           </strong>
 
-          {!isPersonal && (
+          {!isPersonal && !isDiscarded && (
             <span>
               {conversation.needs_resolution_review
                 ? "sin resolución completa"
@@ -984,14 +1076,17 @@ function SummaryConversationCard({
   assigningConversationId,
   personalConversationId,
   clientConversationId,
+  discardedConversationId,
   onAssign,
   onTogglePersonal,
   onToggleClient,
+  onToggleDiscarded,
 }: {
   conversation: Conversation;
   assigningConversationId: string | null;
   personalConversationId: string | null;
   clientConversationId: string | null;
+  discardedConversationId: string | null;
   onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
   onTogglePersonal: (
     conversationId: string,
@@ -1001,14 +1096,20 @@ function SummaryConversationCard({
     conversationId: string,
     isClient: boolean
   ) => Promise<void>;
+  onToggleDiscarded: (
+    conversationId: string,
+    isDiscarded: boolean
+  ) => Promise<void>;
 }) {
   const personal = isPersonalConversation(conversation);
   const isClient = conversation.is_client === true;
+  const discarded = isDiscardedConversation(conversation);
 
   const isBusy =
     assigningConversationId === conversation.conversation_id ||
     personalConversationId === conversation.conversation_id ||
-    clientConversationId === conversation.conversation_id;
+    clientConversationId === conversation.conversation_id ||
+    discardedConversationId === conversation.conversation_id;
 
   const instagramUrl = conversation.external_username
     ? `https://www.instagram.com/${conversation.external_username}/`
@@ -1135,6 +1236,20 @@ function SummaryConversationCard({
               {personal ? "Sacar de Personal" : "Mover a Personal"}
             </button>
 
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() =>
+                onToggleDiscarded(
+                  conversation.conversation_id,
+                  !discarded
+                )
+              }
+            >
+              {discarded ? <RotateCcw size={15} /> : <Trash2 size={15} />}
+              {discarded ? "Restaurar conversación" : "Descartar conversación"}
+            </button>
+
             {instagramUrl ? (
               <a
                 href={instagramUrl}
@@ -1186,9 +1301,11 @@ function QueueSection({
   assigningConversationId,
   personalConversationId,
   clientConversationId,
+  discardedConversationId,
   onAssign,
   onTogglePersonal,
   onToggleClient,
+  onToggleDiscarded,
 }: {
   title: string;
   description: string;
@@ -1198,6 +1315,7 @@ function QueueSection({
   assigningConversationId: string | null;
   personalConversationId: string | null;
   clientConversationId: string | null;
+  discardedConversationId: string | null;
   onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
   onTogglePersonal: (
     conversationId: string,
@@ -1206,6 +1324,10 @@ function QueueSection({
   onToggleClient: (
     conversationId: string,
     isClient: boolean
+  ) => Promise<void>;
+  onToggleDiscarded: (
+    conversationId: string,
+    isDiscarded: boolean
   ) => Promise<void>;
 }) {
   return (
@@ -1235,9 +1357,11 @@ function QueueSection({
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={onAssign}
               onTogglePersonal={onTogglePersonal}
               onToggleClient={onToggleClient}
+              onToggleDiscarded={onToggleDiscarded}
             />
           ))}
         </div>
@@ -1264,6 +1388,9 @@ export default function DashboardPage() {
     string | null
   >(null);
   const [clientConversationId, setClientConversationId] = useState<
+    string | null
+  >(null);
+  const [discardedConversationId, setDiscardedConversationId] = useState<
     string | null
   >(null);
 
@@ -1468,6 +1595,53 @@ export default function DashboardPage() {
     }
   }
 
+
+  async function toggleDiscardedConversation(
+    conversationId: string,
+    isDiscarded: boolean
+  ) {
+    try {
+      setActionError("");
+      setDiscardedConversationId(conversationId);
+
+      const response = await fetch(
+        "/api/dashboard/conversations/discard",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            is_discarded: isDiscarded,
+          }),
+        }
+      );
+
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          body.details ||
+            body.error ||
+            "No se pudo actualizar la conversación descartada."
+        );
+      }
+
+      await loadConversations(false);
+
+      if (isDiscarded) {
+        setActiveTab("discarded");
+      }
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo actualizar la conversación descartada."
+      );
+    } finally {
+      setDiscardedConversationId(null);
+    }
+  }
+
   const searchableConversations = useMemo(() => {
     const query = normalizeText(search);
 
@@ -1500,6 +1674,14 @@ export default function DashboardPage() {
   const activeConversations = searchableConversations.filter(
     isActiveConversation
   );
+
+  const discarded = searchableConversations
+    .filter(isVisibleDiscardedConversation)
+    .sort(
+      (a, b) =>
+        new Date(b.discarded_at || b.updated_at || 0).getTime() -
+        new Date(a.discarded_at || a.updated_at || 0).getTime()
+    );
 
   const personal = searchableConversations
     .filter(isPersonalConversation)
@@ -1567,6 +1749,7 @@ export default function DashboardPage() {
     activeTab !== "summary" &&
     activeTab !== "personal" &&
     activeTab !== "resolved" &&
+    activeTab !== "discarded" &&
     onlyActive;
 
   const visibleUrgent = shouldShowActiveOnly
@@ -1574,6 +1757,7 @@ export default function DashboardPage() {
     : searchableConversations.filter(
         (conversation) =>
           !isPersonalConversation(conversation) &&
+          !isDiscardedConversation(conversation) &&
           getQueue(conversation) === "urgent"
       );
 
@@ -1582,6 +1766,7 @@ export default function DashboardPage() {
     : searchableConversations.filter(
         (conversation) =>
           !isPersonalConversation(conversation) &&
+          !isDiscardedConversation(conversation) &&
           getQueue(conversation) === "sofi"
       );
 
@@ -1590,6 +1775,7 @@ export default function DashboardPage() {
     : searchableConversations.filter(
         (conversation) =>
           !isPersonalConversation(conversation) &&
+          !isDiscardedConversation(conversation) &&
           getQueue(conversation) === "admin"
       );
 
@@ -1602,10 +1788,11 @@ export default function DashboardPage() {
             Sofi Intelligence Inbox
           </div>
 
-          <h1>Centro de conversaciones · Horizontal</h1>
+          <h1>Loki All In</h1>
 
           <p>
-            Prueba una vista horizontal de una sola conversación por fila, usando los mismos datos y acciones.
+            Tu centro de control para priorizar conversaciones, dar seguimiento
+            y asegurar que ningún lead importante se quede atrás.
           </p>
         </div>
 
@@ -1631,15 +1818,15 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          label="Pendientes de Sofi"
+          label="Sofi"
           value={sofi.length}
-          description="Venta, confianza y relación"
+          description="Pendientes de atención personal"
           icon={<UserRound size={19} />}
           tone="sofi"
         />
 
         <MetricCard
-          label="Pendientes de Admin"
+          label="Admin"
           value={admin.length}
           description="Pagos, acceso y operación"
           icon={<Headphones size={19} />}
@@ -1647,35 +1834,35 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          label="Respuestas incompletas"
-          value={incompleteResponses}
-          description="Se contestó, pero falta algo"
-          icon={<AlertTriangle size={19} />}
-          tone="warning"
-        />
-
-        <MetricCard
-          label="High-ticket activos"
-          value={highTicket}
-          description="Oportunidades comerciales"
-          icon={<CircleDollarSign size={19} />}
-          tone="sales"
+          label="Sin asignar"
+          value={unassigned.length}
+          description="Pendientes de clasificación"
+          icon={<MessageCircle size={19} />}
+          tone="unassigned"
         />
 
         <MetricCard
           label="Personal"
           value={personal.length}
-          description="Fuera de IA y seguimiento"
+          description="Fuera del flujo comercial"
           icon={<Heart size={19} />}
           tone="personal"
         />
 
         <MetricCard
-          label="Espera promedio"
-          value={formatWaitingTime(averageWaitMinutes)}
-          description="Conversaciones activas"
-          icon={<Clock3 size={19} />}
-          tone="time"
+          label="Resueltas"
+          value={resolved.length}
+          description="Solicitudes completadas"
+          icon={<CheckCircle2 size={19} />}
+          tone="resolved"
+        />
+
+        <MetricCard
+          label="Descartadas"
+          value={discarded.length}
+          description="No requieren respuesta"
+          icon={<Trash2 size={19} />}
+          tone="discarded"
         />
       </section>
 
@@ -1728,6 +1915,14 @@ export default function DashboardPage() {
             <CheckCircle2 size={15} />
             Resueltas
           </button>
+
+          <button
+            className={activeTab === "discarded" ? "active discarded-tab" : ""}
+            onClick={() => setActiveTab("discarded")}
+          >
+            <Trash2 size={15} />
+            Descartados
+          </button>
         </div>
 
         <div className="filters">
@@ -1744,7 +1939,8 @@ export default function DashboardPage() {
 
           {activeTab !== "summary" &&
             activeTab !== "personal" &&
-            activeTab !== "resolved" && (
+            activeTab !== "resolved" &&
+            activeTab !== "discarded" && (
             <label className="pending-toggle">
               <input
                 type="checkbox"
@@ -1811,9 +2007,11 @@ export default function DashboardPage() {
                         assigningConversationId={assigningConversationId}
                         personalConversationId={personalConversationId}
                         clientConversationId={clientConversationId}
+                        discardedConversationId={discardedConversationId}
                         onAssign={assignConversation}
                         onTogglePersonal={togglePersonalConversation}
                         onToggleClient={toggleClientConversation}
+                        onToggleDiscarded={toggleDiscardedConversation}
                       />
                     ))}
                   </div>
@@ -1842,9 +2040,11 @@ export default function DashboardPage() {
                         assigningConversationId={assigningConversationId}
                         personalConversationId={personalConversationId}
                         clientConversationId={clientConversationId}
+                        discardedConversationId={discardedConversationId}
                         onAssign={assignConversation}
                         onTogglePersonal={togglePersonalConversation}
                         onToggleClient={toggleClientConversation}
+                        onToggleDiscarded={toggleDiscardedConversation}
                       />
                     ))}
                   </div>
@@ -1873,9 +2073,11 @@ export default function DashboardPage() {
                         assigningConversationId={assigningConversationId}
                         personalConversationId={personalConversationId}
                         clientConversationId={clientConversationId}
+                        discardedConversationId={discardedConversationId}
                         onAssign={assignConversation}
                         onTogglePersonal={togglePersonalConversation}
                         onToggleClient={toggleClientConversation}
+                        onToggleDiscarded={toggleDiscardedConversation}
                       />
                     ))}
                   </div>
@@ -1904,9 +2106,11 @@ export default function DashboardPage() {
                         assigningConversationId={assigningConversationId}
                         personalConversationId={personalConversationId}
                         clientConversationId={clientConversationId}
+                        discardedConversationId={discardedConversationId}
                         onAssign={assignConversation}
                         onTogglePersonal={togglePersonalConversation}
                         onToggleClient={toggleClientConversation}
+                        onToggleDiscarded={toggleDiscardedConversation}
                       />
                     ))}
                   </div>
@@ -1931,9 +2135,11 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
 
@@ -1947,9 +2153,11 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
 
@@ -1963,9 +2171,11 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
 
@@ -1979,9 +2189,11 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
 
@@ -1995,9 +2207,11 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
 
@@ -2011,9 +2225,29 @@ export default function DashboardPage() {
               assigningConversationId={assigningConversationId}
               personalConversationId={personalConversationId}
               clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
               onAssign={assignConversation}
               onTogglePersonal={togglePersonalConversation}
               onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
+            />
+          )}
+
+          {activeTab === "discarded" && (
+            <QueueSection
+              title="Descartados"
+              description="Conversaciones descartadas durante 24 horas. Si vuelven a escribir, regresan automáticamente al flujo."
+              conversations={discarded}
+              icon={<Trash2 size={20} />}
+              tone="discarded"
+              assigningConversationId={assigningConversationId}
+              personalConversationId={personalConversationId}
+              clientConversationId={clientConversationId}
+              discardedConversationId={discardedConversationId}
+              onAssign={assignConversation}
+              onTogglePersonal={togglePersonalConversation}
+              onToggleClient={toggleClientConversation}
+              onToggleDiscarded={toggleDiscardedConversation}
             />
           )}
         </div>
@@ -2110,9 +2344,11 @@ export default function DashboardPage() {
 
         .metrics-grid {
           display: grid;
-          grid-template-columns: repeat(7, minmax(0, 1fr));
+          grid-template-columns: repeat(7, minmax(150px, 1fr));
           gap: 10px;
           margin-bottom: 18px;
+          overflow-x: auto;
+          padding-bottom: 3px;
         }
 
         .metric-card {
@@ -2190,6 +2426,21 @@ export default function DashboardPage() {
           background: #fce7f6;
         }
 
+        .metric-unassigned .metric-icon {
+          color: #52525b;
+          background: #f4f4f5;
+        }
+
+        .metric-resolved .metric-icon {
+          color: #067647;
+          background: #dcfae6;
+        }
+
+        .metric-discarded .metric-icon {
+          color: #475467;
+          background: #eaecf0;
+        }
+
         .control-bar {
           display: flex;
           align-items: center;
@@ -2234,6 +2485,11 @@ export default function DashboardPage() {
         .tabs button.personal-tab.active {
           color: #c11574;
           background: #fdf2fa;
+        }
+
+        .tabs button.discarded-tab.active {
+          color: #475467;
+          background: #eaecf0;
         }
 
         .search-box {
@@ -2309,6 +2565,10 @@ export default function DashboardPage() {
           border-top: 4px solid #dd2590;
         }
 
+        .queue-section-discarded {
+          border-top: 4px solid #667085;
+        }
+
         .queue-section-neutral {
           border-top: 4px solid #a1a1aa;
         }
@@ -2347,6 +2607,11 @@ export default function DashboardPage() {
         .queue-section-icon-personal {
           color: #c11574;
           background: #fce7f6;
+        }
+
+        .queue-section-icon-discarded {
+          color: #475467;
+          background: #eaecf0;
         }
 
         .queue-section-icon-neutral {
@@ -2423,6 +2688,11 @@ export default function DashboardPage() {
 
         .conversation-personal {
           border-left: 4px solid #dd2590;
+        }
+
+        .conversation-discarded {
+          border-left: 4px solid #667085;
+          background: #f8f9fa;
         }
 
         .conversation-neutral {
@@ -2662,6 +2932,11 @@ export default function DashboardPage() {
         .status-personal {
           color: #c11574;
           background: #fce7f6;
+        }
+
+        .status-discarded {
+          color: #475467;
+          background: #eaecf0;
         }
 
         .status-closed {
@@ -3020,6 +3295,16 @@ export default function DashboardPage() {
           border-color: #f9a8d4;
           color: #9d174d;
           background: #fdf2f8;
+        }
+
+        .discard-button {
+          color: #475467;
+        }
+
+        .discard-button.discard-active {
+          border-color: #98a2b3;
+          color: #344054;
+          background: #f2f4f7;
         }
 
         .instagram-action {
@@ -3498,12 +3783,6 @@ export default function DashboardPage() {
           white-space: nowrap;
         }
 
-        @media (max-width: 1600px) {
-          .metrics-grid {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-          }
-        }
-
         @media (max-width: 1250px) {
           .summary-board {
             grid-template-columns: repeat(4, minmax(220px, 1fr));
@@ -3528,6 +3807,10 @@ export default function DashboardPage() {
         }
 
         @media (max-width: 850px) {
+          .metrics-grid {
+            grid-template-columns: repeat(7, minmax(145px, 1fr));
+          }
+
           .dashboard-page {
             padding: 18px;
           }
@@ -3535,10 +3818,6 @@ export default function DashboardPage() {
           .dashboard-header {
             align-items: flex-start;
             flex-direction: column;
-          }
-
-          .metrics-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
           .tabs {
@@ -3683,10 +3962,6 @@ export default function DashboardPage() {
         }
 
         @media (max-width: 560px) {
-          .metrics-grid {
-            grid-template-columns: 1fr;
-          }
-
           .compact-summary {
             grid-template-columns: 1fr;
           }

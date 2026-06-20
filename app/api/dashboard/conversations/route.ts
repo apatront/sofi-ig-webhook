@@ -30,6 +30,11 @@ export async function GET() {
         client_marked_at,
         client_marked_by,
 
+        is_discarded,
+        discarded_at,
+        discard_expires_at,
+        discarded_by,
+
         status,
         needs_response,
         queue,
@@ -102,7 +107,10 @@ export async function GET() {
       .limit(250);
 
     if (error) {
-      console.error("Dashboard conversations fetch error:", error);
+      console.error(
+        "Dashboard conversations fetch error:",
+        error
+      );
 
       return NextResponse.json(
         {
@@ -126,9 +134,14 @@ export async function GET() {
     );
   } catch (error) {
     const errorMessage =
-      error instanceof Error ? error.message : "Unexpected server error";
+      error instanceof Error
+        ? error.message
+        : "Unexpected server error";
 
-    console.error("Dashboard conversations route error:", errorMessage);
+    console.error(
+      "Dashboard conversations route error:",
+      errorMessage
+    );
 
     return NextResponse.json(
       {
