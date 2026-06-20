@@ -49,6 +49,16 @@ function escapeHtml(value: string) {
     .replaceAll(">", "&gt;");
 }
 
+function truncateText(value: string, maxLength: number) {
+  const cleanValue = value.trim();
+
+  if (cleanValue.length <= maxLength) {
+    return cleanValue;
+  }
+
+  return `${cleanValue.slice(0, maxLength - 1).trim()}…`;
+}
+
 function getDisplayName(conversation: Conversation) {
   if (conversation.external_username) {
     return `@${conversation.external_username}`;
@@ -259,14 +269,18 @@ function buildConversationLines(
 
   const lines = visible.map((conversation) => {
     const name = escapeHtml(getDisplayName(conversation));
+
     const waitingTime = formatWaitingTime(
       getWaitingMinutes(conversation)
     );
 
     const summary = escapeHtml(
-      conversation.summary?.trim() ||
-        conversation.resolution_alert?.trim() ||
-        "Sin resumen disponible"
+      truncateText(
+        conversation.summary?.trim() ||
+          conversation.resolution_alert?.trim() ||
+          "Sin resumen disponible",
+        180
+      )
     );
 
     return [
@@ -287,6 +301,9 @@ function buildConversationLines(
 async function sendTelegramSummary() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
+  const messageThreadIdValue =
+    process.env.TELEGRAM_MESSAGE_THREAD_ID;
+
   const dashboardUrl =
     process.env.LOKI_DASHBOARD_URL ||
     "https://sofi-ig-webhook.vercel.app/dashboard-horizontal";
@@ -297,6 +314,19 @@ async function sendTelegramSummary() {
 
   if (!chatId) {
     throw new Error("TELEGRAM_CHAT_ID is missing");
+  }
+
+  const messageThreadId = messageThreadIdValue
+    ? Number(messageThreadIdValue)
+    : undefined;
+
+  if (
+    messageThreadIdValue &&
+    (!Number.isInteger(messageThreadId) || messageThreadId <= 0)
+  ) {
+    throw new Error(
+      "TELEGRAM_MESSAGE_THREAD_ID must be a positive integer"
+    );
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -403,15 +433,18 @@ async function sendTelegramSummary() {
   );
 
   const longWaitingHot = hot.filter(
-    (conversation) => getWaitingMinutes(conversation) >= 60
+    (conversation) =>
+      getWaitingMinutes(conversation) >= 60
   );
 
   const longWaitingSofi = sofi.filter(
-    (conversation) => getWaitingMinutes(conversation) >= 180
+    (conversation) =>
+      getWaitingMinutes(conversation) >= 180
   );
 
   const longWaitingAdmin = admin.filter(
-    (conversation) => getWaitingMinutes(conversation) >= 180
+    (conversation) =>
+      getWaitingMinutes(conversation) >= 180
   );
 
   const incompleteResponses = active.filter(
@@ -461,6 +494,41 @@ async function sendTelegramSummary() {
     `• Descartadas: <b>${discardedToday.length}</b>`,
   ].join("\n");
 
+  const telegramPayload: {
+    chat_id: string;
+    message_thread_id?: number;
+    text: string;
+    parse_mode: "HTML";
+    disable_web_page_preview: boolean;
+    reply_markup: {
+      inline_keyboard: Array<
+        Array<{
+          text: string;
+          url: string;
+        }>
+      >;
+    };
+  } = {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: "Abrir Loki All In",
+            url: dashboardUrl,
+          },
+        ],
+      ],
+    },
+  };
+
+  if (messageThreadId) {
+    telegramPayload.message_thread_id = messageThreadId;
+  }
+
   const telegramResponse = await fetch(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
@@ -468,22 +536,7 @@ async function sendTelegramSummary() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_web_page_preview: true,
-        reply_markup: {
-          inline_keyboard: [
-            [
-              {
-                text: "Abrir Loki All In",
-                url: dashboardUrl,
-              },
-            ],
-          ],
-        },
-      }),
+      body: JSON.stringify(telegramPayload),
     }
   );
 
@@ -498,6 +551,12 @@ async function sendTelegramSummary() {
 
   return {
     ok: true,
+    telegram: {
+      chat_id: chatId,
+      message_thread_id: messageThreadId || null,
+      message_id:
+        telegramBody.result?.message_id || null,
+    },
     counts: {
       active: active.length,
       hot: hot.length,
@@ -517,7 +576,8 @@ function isAuthorized(request: NextRequest) {
     return false;
   }
 
-  const authorization = request.headers.get("authorization");
+  const authorization =
+    request.headers.get("authorization");
 
   return authorization === `Bearer ${cronSecret}`;
 }
