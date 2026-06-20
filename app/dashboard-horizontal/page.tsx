@@ -3415,16 +3415,20 @@ export default function DashboardPage() {
           gap: 9px;
           align-items: start;
           overflow-x: auto;
-          padding-bottom: 3px;
+          overflow-y: visible;
+          padding: 0 0 260px;
+          margin-bottom: -260px;
         }
 
         .summary-column {
+          position: relative;
           min-width: 0;
           padding: 8px;
           border: 1px solid #e4e4e7;
           border-top: 3px solid #a1a1aa;
           border-radius: 13px;
           background: #f8f8f9;
+          overflow: visible;
         }
 
         .summary-column-hot {
@@ -3493,6 +3497,7 @@ export default function DashboardPage() {
         .summary-column-list {
           display: grid;
           gap: 7px;
+          overflow: visible;
         }
 
         .summary-column-empty {
@@ -3511,6 +3516,7 @@ export default function DashboardPage() {
 
         .summary-card {
           position: relative;
+          z-index: 1;
           display: flex;
           flex-direction: column;
           gap: 6px;
@@ -3521,9 +3527,14 @@ export default function DashboardPage() {
           border-radius: 11px;
           background: white;
           box-shadow: 0 3px 12px rgba(24, 24, 27, 0.035);
+          overflow: visible;
           transition:
             transform 140ms ease,
             box-shadow 140ms ease;
+        }
+
+        .summary-card:has(.summary-actions-menu[open]) {
+          z-index: 100;
         }
 
         .summary-card:hover {
@@ -3648,6 +3659,7 @@ export default function DashboardPage() {
 
         .summary-actions-menu {
           position: relative;
+          z-index: 120;
           flex: 0 0 auto;
         }
 
@@ -3677,16 +3689,17 @@ export default function DashboardPage() {
 
         .summary-actions-dropdown {
           position: absolute;
-          z-index: 40;
+          z-index: 9999;
           top: 32px;
           right: 0;
           display: grid;
-          min-width: 180px;
+          min-width: 190px;
           padding: 5px;
           border: 1px solid #e4e4e7;
           border-radius: 10px;
           background: white;
-          box-shadow: 0 14px 35px rgba(24, 24, 27, 0.16);
+          box-shadow: 0 18px 42px rgba(24, 24, 27, 0.22);
+          isolation: isolate;
         }
 
         .summary-actions-dropdown button,
