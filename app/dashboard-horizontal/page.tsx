@@ -9,6 +9,7 @@ import {
   Clock3,
   Eye,
   EyeOff,
+  Ellipsis,
   Flame,
   Heart,
   Headphones,
@@ -111,7 +112,7 @@ type Conversation = {
 };
 
 type DashboardTab =
-  | "overview"
+  | "summary"
   | "urgent"
   | "sofi"
   | "admin"
@@ -976,6 +977,206 @@ function ConversationCard({
   );
 }
 
+
+
+function SummaryConversationCard({
+  conversation,
+  assigningConversationId,
+  personalConversationId,
+  clientConversationId,
+  onAssign,
+  onTogglePersonal,
+  onToggleClient,
+}: {
+  conversation: Conversation;
+  assigningConversationId: string | null;
+  personalConversationId: string | null;
+  clientConversationId: string | null;
+  onAssign: (conversationId: string, assignedTo: Assignee) => Promise<void>;
+  onTogglePersonal: (
+    conversationId: string,
+    isPersonal: boolean
+  ) => Promise<void>;
+  onToggleClient: (
+    conversationId: string,
+    isClient: boolean
+  ) => Promise<void>;
+}) {
+  const personal = isPersonalConversation(conversation);
+  const isClient = conversation.is_client === true;
+
+  const isBusy =
+    assigningConversationId === conversation.conversation_id ||
+    personalConversationId === conversation.conversation_id ||
+    clientConversationId === conversation.conversation_id;
+
+  const instagramUrl = conversation.external_username
+    ? `https://www.instagram.com/${conversation.external_username}/`
+    : null;
+
+  return (
+    <article
+      className={`summary-card ${
+        isClient ? "summary-card-client" : ""
+      }`}
+    >
+      <div className="summary-card-top">
+        <div className="summary-profile">
+          <div className="summary-avatar-ring">
+            {conversation.external_profile_pic ? (
+              <img
+                src={conversation.external_profile_pic}
+                alt={getDisplayName(conversation)}
+                className="summary-avatar"
+              />
+            ) : (
+              <div className="summary-avatar summary-avatar-fallback">
+                {getDisplayName(conversation).slice(0, 1)}
+              </div>
+            )}
+          </div>
+
+          <div className="summary-profile-copy">
+            <div className="summary-name-row">
+              <strong>{getDisplayName(conversation)}</strong>
+
+              {conversation.is_verified_user && (
+                <ShieldCheck size={13} className="verified-icon" />
+              )}
+
+              {isClient && (
+                <Star
+                  size={14}
+                  className="client-star"
+                  fill="currentColor"
+                />
+              )}
+            </div>
+
+            <span>{conversation.external_name || "Sin nombre"}</span>
+          </div>
+        </div>
+
+        <div className="summary-header-tags">
+          {!personal && (
+            <>
+              <span>Lead {conversation.lead_score || 0}</span>
+
+              <span
+                className={
+                  (conversation.urgency_score || 0) >= 70
+                    ? "summary-urgency-high"
+                    : ""
+                }
+              >
+                U {conversation.urgency_score || 0}
+              </span>
+            </>
+          )}
+        </div>
+
+        <details className="summary-actions-menu">
+          <summary aria-label="Abrir acciones">
+            <Ellipsis size={19} />
+          </summary>
+
+          <div className="summary-actions-dropdown">
+            {!personal && (
+              <>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() =>
+                    onAssign(conversation.conversation_id, "sofi")
+                  }
+                >
+                  <UserRound size={15} />
+                  Asignar a Sofi
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={() =>
+                    onAssign(conversation.conversation_id, "admin")
+                  }
+                >
+                  <Headphones size={15} />
+                  Asignar a Admin
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() =>
+                onToggleClient(
+                  conversation.conversation_id,
+                  !isClient
+                )
+              }
+            >
+              <Star size={15} />
+              {isClient ? "Quitar Clienta" : "Marcar Clienta"}
+            </button>
+
+            <button
+              type="button"
+              disabled={isBusy}
+              onClick={() =>
+                onTogglePersonal(
+                  conversation.conversation_id,
+                  !personal
+                )
+              }
+            >
+              <Heart size={15} />
+              {personal ? "Sacar de Personal" : "Mover a Personal"}
+            </button>
+
+            {instagramUrl ? (
+              <a
+                href={instagramUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <ArrowUpRight size={15} />
+                Abrir DM
+              </a>
+            ) : (
+              <span className="summary-disabled-action">
+                <ArrowUpRight size={15} />
+                Sin perfil
+              </span>
+            )}
+          </div>
+        </details>
+      </div>
+
+      <div className="summary-text">
+        <p>
+          {conversation.summary ||
+            conversation.last_message_text ||
+            "Pendiente de análisis."}
+        </p>
+      </div>
+
+      {conversation.resolution_alert && !personal && (
+        <div className="summary-alert">
+          <AlertTriangle size={13} />
+          <span>{conversation.resolution_alert}</span>
+        </div>
+      )}
+
+      <div className="summary-card-bottom">
+        <span>{humanize(conversation.intent)}</span>
+        <time>{formatDate(conversation.updated_at)}</time>
+      </div>
+    </article>
+  );
+}
+
 function QueueSection({
   title,
   description,
@@ -1067,7 +1268,7 @@ export default function DashboardPage() {
   >(null);
 
   const [activeTab, setActiveTab] =
-    useState<DashboardTab>("overview");
+    useState<DashboardTab>("summary");
   const [search, setSearch] = useState("");
   const [onlyActive, setOnlyActive] = useState(true);
 
@@ -1363,7 +1564,10 @@ export default function DashboardPage() {
       : 0;
 
   const shouldShowActiveOnly =
-    activeTab !== "personal" && activeTab !== "resolved" && onlyActive;
+    activeTab !== "summary" &&
+    activeTab !== "personal" &&
+    activeTab !== "resolved" &&
+    onlyActive;
 
   const visibleUrgent = shouldShowActiveOnly
     ? urgent
@@ -1478,11 +1682,11 @@ export default function DashboardPage() {
       <section className="control-bar">
         <div className="tabs">
           <button
-            className={activeTab === "overview" ? "active" : ""}
-            onClick={() => setActiveTab("overview")}
+            className={activeTab === "summary" ? "active" : ""}
+            onClick={() => setActiveTab("summary")}
           >
             <Inbox size={15} />
-            Vista general
+            Resumen
           </button>
 
           <button
@@ -1538,7 +1742,9 @@ export default function DashboardPage() {
             />
           </label>
 
-          {activeTab !== "personal" && activeTab !== "resolved" && (
+          {activeTab !== "summary" &&
+            activeTab !== "personal" &&
+            activeTab !== "resolved" && (
             <label className="pending-toggle">
               <input
                 type="checkbox"
@@ -1574,7 +1780,148 @@ export default function DashboardPage() {
 
       {!loading && !loadError && (
         <div className="queues-container">
-          {(activeTab === "overview" || activeTab === "urgent") && (
+          {activeTab === "summary" && (
+            <section className="summary-view">
+              <div className="summary-view-heading">
+                <div>
+                  <h2>Resumen del inbox</h2>
+                  <p>
+                    Cuatro colas operativas para visualizar el inbox de un vistazo.
+                  </p>
+                </div>
+
+                <span>{activeConversations.length} activas</span>
+              </div>
+
+              <div className="summary-board">
+                <section className="summary-column summary-column-hot">
+                  <div className="summary-column-heading">
+                    <div>
+                      <Flame size={16} />
+                      <strong>Hot leads</strong>
+                    </div>
+                    <span>{urgent.length}</span>
+                  </div>
+
+                  <div className="summary-column-list">
+                    {urgent.map((conversation) => (
+                      <SummaryConversationCard
+                        key={conversation.conversation_id}
+                        conversation={conversation}
+                        assigningConversationId={assigningConversationId}
+                        personalConversationId={personalConversationId}
+                        clientConversationId={clientConversationId}
+                        onAssign={assignConversation}
+                        onTogglePersonal={togglePersonalConversation}
+                        onToggleClient={toggleClientConversation}
+                      />
+                    ))}
+                  </div>
+
+                  {urgent.length === 0 && (
+                    <div className="summary-column-empty">
+                      Sin hot leads
+                    </div>
+                  )}
+                </section>
+
+                <section className="summary-column summary-column-sofi">
+                  <div className="summary-column-heading">
+                    <div>
+                      <UserRound size={16} />
+                      <strong>Sofi</strong>
+                    </div>
+                    <span>{sofi.length}</span>
+                  </div>
+
+                  <div className="summary-column-list">
+                    {sofi.map((conversation) => (
+                      <SummaryConversationCard
+                        key={conversation.conversation_id}
+                        conversation={conversation}
+                        assigningConversationId={assigningConversationId}
+                        personalConversationId={personalConversationId}
+                        clientConversationId={clientConversationId}
+                        onAssign={assignConversation}
+                        onTogglePersonal={togglePersonalConversation}
+                        onToggleClient={toggleClientConversation}
+                      />
+                    ))}
+                  </div>
+
+                  {sofi.length === 0 && (
+                    <div className="summary-column-empty">
+                      Sin pendientes de Sofi
+                    </div>
+                  )}
+                </section>
+
+                <section className="summary-column summary-column-admin">
+                  <div className="summary-column-heading">
+                    <div>
+                      <Headphones size={16} />
+                      <strong>Admin</strong>
+                    </div>
+                    <span>{admin.length}</span>
+                  </div>
+
+                  <div className="summary-column-list">
+                    {admin.map((conversation) => (
+                      <SummaryConversationCard
+                        key={conversation.conversation_id}
+                        conversation={conversation}
+                        assigningConversationId={assigningConversationId}
+                        personalConversationId={personalConversationId}
+                        clientConversationId={clientConversationId}
+                        onAssign={assignConversation}
+                        onTogglePersonal={togglePersonalConversation}
+                        onToggleClient={toggleClientConversation}
+                      />
+                    ))}
+                  </div>
+
+                  {admin.length === 0 && (
+                    <div className="summary-column-empty">
+                      Sin pendientes de Admin
+                    </div>
+                  )}
+                </section>
+
+                <section className="summary-column summary-column-unassigned">
+                  <div className="summary-column-heading">
+                    <div>
+                      <MessageCircle size={16} />
+                      <strong>Sin asignar</strong>
+                    </div>
+                    <span>{unassigned.length}</span>
+                  </div>
+
+                  <div className="summary-column-list">
+                    {unassigned.map((conversation) => (
+                      <SummaryConversationCard
+                        key={conversation.conversation_id}
+                        conversation={conversation}
+                        assigningConversationId={assigningConversationId}
+                        personalConversationId={personalConversationId}
+                        clientConversationId={clientConversationId}
+                        onAssign={assignConversation}
+                        onTogglePersonal={togglePersonalConversation}
+                        onToggleClient={toggleClientConversation}
+                      />
+                    ))}
+                  </div>
+
+                  {unassigned.length === 0 && (
+                    <div className="summary-column-empty">
+                      Todo está clasificado
+                    </div>
+                  )}
+                </section>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "urgent" && (
             <QueueSection
               title="Hot leads"
               description="Leads con alta intención, urgencia o potencial de cierre."
@@ -1590,7 +1937,7 @@ export default function DashboardPage() {
             />
           )}
 
-          {(activeTab === "overview" || activeTab === "sofi") && (
+          {activeTab === "sofi" && (
             <QueueSection
               title="Sofi"
               description="Conversaciones donde la voz personal de Sofi puede mover la decisión."
@@ -1606,7 +1953,7 @@ export default function DashboardPage() {
             />
           )}
 
-          {(activeTab === "overview" || activeTab === "admin") && (
+          {activeTab === "admin" && (
             <QueueSection
               title="Admin"
               description="Pagos, accesos, soporte, logística y seguimiento operativo."
@@ -1622,7 +1969,7 @@ export default function DashboardPage() {
             />
           )}
 
-          {activeTab === "overview" && unassigned.length > 0 && (
+          {false && unassigned.length > 0 && (
             <QueueSection
               title="Sin asignar"
               description="Conversaciones activas pendientes de clasificación."
@@ -2740,6 +3087,417 @@ export default function DashboardPage() {
           background: #fff1f2;
         }
 
+        .summary-view {
+          padding: 14px;
+          border: 1px solid #e4e4e7;
+          border-radius: 17px;
+          background: rgba(255, 255, 255, 0.72);
+          overflow: hidden;
+        }
+
+        .summary-view-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 11px;
+        }
+
+        .summary-view-heading h2 {
+          margin: 0;
+          font-size: 17px;
+        }
+
+        .summary-view-heading p {
+          margin: 3px 0 0;
+          color: #71717a;
+          font-size: 10px;
+        }
+
+        .summary-view-heading > span {
+          padding: 5px 8px;
+          border-radius: 999px;
+          color: #52525b;
+          background: #f4f4f5;
+          font-size: 9px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .summary-board {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(225px, 1fr));
+          gap: 9px;
+          align-items: start;
+          overflow-x: auto;
+          padding-bottom: 3px;
+        }
+
+        .summary-column {
+          min-width: 0;
+          padding: 8px;
+          border: 1px solid #e4e4e7;
+          border-top: 3px solid #a1a1aa;
+          border-radius: 13px;
+          background: #f8f8f9;
+        }
+
+        .summary-column-hot {
+          border-top-color: #d92d20;
+        }
+
+        .summary-column-sofi {
+          border-top-color: #7f56d9;
+        }
+
+        .summary-column-admin {
+          border-top-color: #2e90fa;
+        }
+
+        .summary-column-unassigned {
+          border-top-color: #a1a1aa;
+        }
+
+        .summary-column-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          min-height: 28px;
+          margin-bottom: 7px;
+          padding: 0 2px;
+        }
+
+        .summary-column-heading > div {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: #3f3f46;
+        }
+
+        .summary-column-hot .summary-column-heading > div {
+          color: #b42318;
+        }
+
+        .summary-column-sofi .summary-column-heading > div {
+          color: #6941c6;
+        }
+
+        .summary-column-admin .summary-column-heading > div {
+          color: #175cd3;
+        }
+
+        .summary-column-heading strong {
+          font-size: 11px;
+        }
+
+        .summary-column-heading > span {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 22px;
+          height: 22px;
+          padding: 0 6px;
+          border-radius: 999px;
+          color: #52525b;
+          background: white;
+          font-size: 9px;
+          font-weight: 850;
+        }
+
+        .summary-column-list {
+          display: grid;
+          gap: 7px;
+        }
+
+        .summary-column-empty {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 70px;
+          padding: 10px;
+          border: 1px dashed #d4d4d8;
+          border-radius: 10px;
+          color: #a1a1aa;
+          background: rgba(255, 255, 255, 0.6);
+          font-size: 9px;
+          text-align: center;
+        }
+
+        .summary-card {
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          min-width: 0;
+          min-height: 118px;
+          padding: 8px;
+          border: 1px solid #e4e4e7;
+          border-radius: 11px;
+          background: white;
+          box-shadow: 0 3px 12px rgba(24, 24, 27, 0.035);
+          transition:
+            transform 140ms ease,
+            box-shadow 140ms ease;
+        }
+
+        .summary-card:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 7px 18px rgba(24, 24, 27, 0.065);
+        }
+
+        .summary-card-client {
+          background: linear-gradient(180deg, #fffdf3, #fffef9);
+          box-shadow:
+            inset 0 0 0 1px #fde68a,
+            0 3px 12px rgba(24, 24, 27, 0.035);
+        }
+
+        .summary-card-top {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .summary-profile {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+        }
+
+        .summary-avatar-ring {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex: 0 0 32px;
+          width: 32px;
+          height: 32px;
+          padding: 2px;
+          border-radius: 999px;
+          background: linear-gradient(
+            135deg,
+            #feda75,
+            #fa7e1e,
+            #d62976,
+            #962fbf,
+            #4f5bd5
+          );
+        }
+
+        .summary-avatar {
+          width: 28px;
+          height: 28px;
+          border: 2px solid white;
+          border-radius: 999px;
+          object-fit: cover;
+          background: #f4f4f5;
+        }
+
+        .summary-avatar-fallback {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+          background: #27272a;
+          font-size: 11px;
+          font-weight: 850;
+          text-transform: uppercase;
+        }
+
+        .summary-profile-copy {
+          min-width: 0;
+        }
+
+        .summary-name-row {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .summary-name-row strong {
+          max-width: 105px;
+          overflow: hidden;
+          font-size: 10px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summary-profile-copy > span {
+          display: block;
+          max-width: 105px;
+          overflow: hidden;
+          margin-top: 1px;
+          color: #71717a;
+          font-size: 8px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summary-header-tags {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 3px;
+          min-width: 0;
+        }
+
+        .summary-header-tags span {
+          display: inline-flex;
+          align-items: center;
+          padding: 3px 5px;
+          border-radius: 999px;
+          color: #52525b;
+          background: #f4f4f5;
+          font-size: 7px;
+          font-weight: 850;
+          white-space: nowrap;
+        }
+
+        .summary-header-tags .summary-urgency-high {
+          color: #b42318;
+          background: #fee4e2;
+        }
+
+        .summary-actions-menu {
+          position: relative;
+          flex: 0 0 auto;
+        }
+
+        .summary-actions-menu summary {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 27px;
+          height: 27px;
+          border: 1px solid #e4e4e7;
+          border-radius: 8px;
+          color: #52525b;
+          background: white;
+          cursor: pointer;
+          list-style: none;
+        }
+
+        .summary-actions-menu summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .summary-actions-menu[open] summary {
+          border-color: #c4b5fd;
+          color: #6941c6;
+          background: #f5f3ff;
+        }
+
+        .summary-actions-dropdown {
+          position: absolute;
+          z-index: 40;
+          top: 32px;
+          right: 0;
+          display: grid;
+          min-width: 180px;
+          padding: 5px;
+          border: 1px solid #e4e4e7;
+          border-radius: 10px;
+          background: white;
+          box-shadow: 0 14px 35px rgba(24, 24, 27, 0.16);
+        }
+
+        .summary-actions-dropdown button,
+        .summary-actions-dropdown a,
+        .summary-disabled-action {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          width: 100%;
+          padding: 8px;
+          border: 0;
+          border-radius: 7px;
+          color: #3f3f46;
+          background: transparent;
+          font: inherit;
+          font-size: 9px;
+          font-weight: 750;
+          text-align: left;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .summary-actions-dropdown button:hover:not(:disabled),
+        .summary-actions-dropdown a:hover {
+          background: #f4f4f5;
+        }
+
+        .summary-actions-dropdown button:disabled {
+          opacity: 0.5;
+          cursor: wait;
+        }
+
+        .summary-disabled-action {
+          opacity: 0.45;
+          cursor: default;
+        }
+
+        .summary-text {
+          min-height: 33px;
+          padding: 6px 7px;
+          border-radius: 8px;
+          background: #fafafa;
+        }
+
+        .summary-text p {
+          display: -webkit-box;
+          overflow: hidden;
+          margin: 0;
+          color: #3f3f46;
+          font-size: 8.5px;
+          line-height: 1.35;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
+        }
+
+        .summary-alert {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          min-width: 0;
+          padding: 5px 6px;
+          border-radius: 7px;
+          color: #b42318;
+          background: #fff1f0;
+          font-size: 7px;
+          line-height: 1.2;
+        }
+
+        .summary-alert svg {
+          flex: 0 0 auto;
+        }
+
+        .summary-alert span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summary-card-bottom {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+          padding-top: 5px;
+          border-top: 1px solid #f1f1f3;
+          color: #a1a1aa;
+          font-size: 7px;
+        }
+
+        .summary-card-bottom span {
+          max-width: 55%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
         @media (max-width: 1600px) {
           .metrics-grid {
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2747,6 +3505,10 @@ export default function DashboardPage() {
         }
 
         @media (max-width: 1250px) {
+          .summary-board {
+            grid-template-columns: repeat(4, minmax(220px, 1fr));
+          }
+
           .conversation-grid {
             grid-template-columns: 1fr;
           }
