@@ -316,17 +316,21 @@ async function sendTelegramSummary() {
     throw new Error("TELEGRAM_CHAT_ID is missing");
   }
 
-  const messageThreadId = messageThreadIdValue
-    ? Number(messageThreadIdValue)
-    : undefined;
+  let messageThreadId: number | undefined;
 
-  if (
-    messageThreadIdValue &&
-    (!Number.isInteger(messageThreadId) || messageThreadId <= 0)
-  ) {
-    throw new Error(
-      "TELEGRAM_MESSAGE_THREAD_ID must be a positive integer"
-    );
+  if (messageThreadIdValue) {
+    const parsedMessageThreadId = Number(messageThreadIdValue);
+
+    if (
+      !Number.isInteger(parsedMessageThreadId) ||
+      parsedMessageThreadId <= 0
+    ) {
+      throw new Error(
+        "TELEGRAM_MESSAGE_THREAD_ID must be a positive integer"
+      );
+    }
+
+    messageThreadId = parsedMessageThreadId;
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -525,7 +529,7 @@ async function sendTelegramSummary() {
     },
   };
 
-  if (messageThreadId) {
+  if (messageThreadId !== undefined) {
     telegramPayload.message_thread_id = messageThreadId;
   }
 
